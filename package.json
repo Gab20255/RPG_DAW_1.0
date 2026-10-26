@@ -1,0 +1,22 @@
+{
+  "name": "rpg-multiplayer-gemini",
+  "version": "1.0.0",
+  "description": "RPG de Texto Multiplayer Cooperativo em Tempo Real com Google Gemini como Mestre do Jogo",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "chat": "node src/chat-terminal.js"
+  },
+  "keywords": [
+    "rpg",
+    "gemini",
+    "multiplayer",
+    "websocket"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2"
+  }
+}
