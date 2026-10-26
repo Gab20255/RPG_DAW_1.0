@@ -7,6 +7,9 @@
 //
 // O OpenRouter usa formato OpenAI-compatível e tem modelos gratuitos.
 
+const { criarMundoPrompt, validarMundo } = require('../prompts/mundoPrompt');
+const { jsonrepair } = require('jsonrepair');
+
 const SYSTEM_PROMPT = `Você é o MESTRE DE RPG definitivo — um narrador épico, criativo e imersivo.
 
 SUAS RESPONSABILIDADES:
@@ -33,16 +36,16 @@ REGRAS:
 class GeminiService {
     constructor(config) {
         this.chatHistory = [];
+        this.worldMaxTokens = config.worldMaxTokens ?? 3000;
+        if (!Number.isInteger(this.worldMaxTokens) || this.worldMaxTokens <= 0) {
+            throw new Error('WORLD_MAX_TOKENS deve ser um numero inteiro positivo.');
+        }
 
         // Detecta qual provedor usar
         if (config.openrouterKey) {
             this.provider = 'openrouter';
             this.apiKey = config.openrouterKey;
-            let m = config.model || 'google/gemini-2.5-flash';
-            if (m.endsWith(':free')) {
-                m = 'google/gemini-2.5-flash';
-            }
-            this.modelName = m;
+            this.modelName = config.model || 'google/gemini-2.5-flash';
             this.baseUrl = 'https://openrouter.ai/api/v1/chat/completions';
         } else if (config.geminiKey) {
             this.provider = 'gemini';
@@ -64,17 +67,45 @@ class GeminiService {
         return this._enviarGemini(mensagemUsuario, tentativas);
     }
 
+    /** Gera um mundo independente, sem conversa nem criacao de jogador. */
+    async gerarMundo(tema, tentativas = 3) {
+        if (typeof tema !== 'string' || !tema.trim()) {
+            throw new Error('Informe um tema para gerar o mundo.');
+        }
+
+        const opcoes = { systemPrompt: criarMundoPrompt(this.worldMaxTokens), json: true, maxTokens: this.worldMaxTokens, usarHistorico: false };
+        const pedido = `Crie o mundo completo para esta descricao: ${JSON.stringify(tema.trim())}`;
+        const texto = this.provider === 'openrouter'
+            ? await this._enviarOpenRouter(pedido, tentativas, opcoes)
+            : await this._enviarGemini(pedido, tentativas, opcoes);
+
+        let mundo;
+        try {
+            const json = texto.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+            // Nunca completa uma resposta cortada; so corrige sintaxe de um objeto encerrado.
+            if (!json.startsWith('{') || !json.endsWith('}')) throw new Error('Objeto incompleto.');
+            try {
+                mundo = JSON.parse(json);
+            } catch {
+                mundo = JSON.parse(jsonrepair(json));
+            }
+        } catch {
+            throw new Error('A IA nao retornou um JSON completo e valido. Nenhum arquivo foi salvo. Tente novamente.');
+        }
+        return validarMundo(mundo);
+    }
+
     /**
      * Envia via OpenRouter (formato OpenAI-compatível)
      */
-    async _enviarOpenRouter(mensagemUsuario, tentativas) {
+    async _enviarOpenRouter(mensagemUsuario, tentativas, opcoes = {}) {
         // Monta mensagens no formato OpenAI
         const messages = [
-            { role: 'system', content: SYSTEM_PROMPT }
+            { role: 'system', content: opcoes.systemPrompt || SYSTEM_PROMPT }
         ];
 
         // Histórico
-        for (const msg of this.chatHistory) {
+        for (const msg of opcoes.usarHistorico === false ? [] : this.chatHistory) {
             messages.push({
                 role: msg.role === 'model' ? 'assistant' : msg.role,
                 content: msg.parts[0].text
@@ -88,6 +119,7 @@ class GeminiService {
             try {
                 const response = await fetch(this.baseUrl, {
                     method: 'POST',
+                    signal: AbortSignal.timeout(180000),
                     headers: {
                         'Authorization': `Bearer ${this.apiKey}`,
                         'Content-Type': 'application/json',
@@ -97,9 +129,13 @@ class GeminiService {
                     body: JSON.stringify({
                         model: this.modelName,
                         messages: messages,
-                        temperature: 0.9,
+                        temperature: opcoes.json ? 0.4 : 0.9,
                         top_p: 0.95,
-                        max_tokens: 1200,
+                        max_tokens: opcoes.maxTokens || 1200,
+                        ...(opcoes.json ? { response_format: { type: 'json_object' } } : {}),
+                        // No Flash 2.5, reserva o orcamento para o JSON em vez de raciocinio.
+                        ...(opcoes.json && /^google\/gemini-2\.5-flash(?::free)?$/.test(this.modelName)
+                            ? { reasoning: { enabled: false } } : {}),
                     })
                 });
 
@@ -108,39 +144,56 @@ class GeminiService {
                     const status = response.status;
                     const ehTemporario = status === 503 || status === 429 || status === 502;
 
+                    if (status === 402) {
+                        const disponiveis = errorData.error?.message?.match(/can only afford\s+(\d+)/i)?.[1];
+                        const detalhe = disponiveis ? ` O saldo atual permite ate ${disponiveis} tokens de resposta.` : '';
+                        const error = new Error(`Saldo insuficiente no OpenRouter para solicitar ${opcoes.maxTokens || 1200} tokens.${detalhe} Reduza WORLD_MAX_TOKENS no .env ou adicione creditos na sua conta.`);
+                        error.status = status;
+                        throw error;
+                    }
+
                     if (ehTemporario && tentativa < tentativas) {
                         const espera = tentativa * 3;
-                        process.stdout.write(`\x1b[33m⏳ API ocupada (${status}). Tentando novamente em ${espera}s... (${tentativa}/${tentativas})\x1b[0m\n`);
+                        process.stderr.write(`\x1b[33m⏳ API ocupada (${status}). Tentando novamente em ${espera}s... (${tentativa}/${tentativas})\x1b[0m\n`);
                         await new Promise(r => setTimeout(r, espera * 1000));
                         continue;
                     }
 
-                    if (ehTemporario) {
+                    if (ehTemporario && !opcoes.json) {
                         return `⚠️  A API está sobrecarregada (erro ${status}). Aguarde ~30 segundos e tente novamente.`;
                     }
 
-                    throw new Error(`Erro ${status}: ${JSON.stringify(errorData)}`);
+                    const error = new Error(`Erro ${status}: ${errorData.error?.message || 'Falha na API OpenRouter.'}`);
+                    error.status = status;
+                    throw error;
                 }
 
                 const data = await response.json();
+                if (opcoes.json) {
+                    const choice = data.choices?.[0];
+                    this._validarRespostaMundo({
+                        texto: choice?.message?.content,
+                        motivo: choice?.finish_reason || choice?.native_finish_reason || 'nao informado',
+                        cortada: choice?.finish_reason === 'length' || choice?.native_finish_reason === 'MAX_TOKENS',
+                        tokens: data.usage?.completion_tokens,
+                        tokensRaciocinio: data.usage?.completion_tokens_details?.reasoning_tokens,
+                        limite: opcoes.maxTokens,
+                    });
+                }
                 const respostaTexto = data.choices?.[0]?.message?.content || 'Mestre não conseguiu responder...';
 
                 // Salva no histórico
-                this.chatHistory.push({
-                    role: 'user',
-                    parts: [{ text: mensagemUsuario }]
-                });
-                this.chatHistory.push({
-                    role: 'model',
-                    parts: [{ text: respostaTexto }]
-                });
+                if (opcoes.usarHistorico !== false) {
+                    this.chatHistory.push({ role: 'user', parts: [{ text: mensagemUsuario }] });
+                    this.chatHistory.push({ role: 'model', parts: [{ text: respostaTexto }] });
+                }
 
                 return respostaTexto;
 
             } catch (error) {
-                if (tentativa < tentativas) {
+                if (tentativa < tentativas && (!error.status || [429, 502, 503].includes(error.status))) {
                     const espera = tentativa * 2;
-                    process.stdout.write(`\x1b[33m⏳ Tentando reconectar em ${espera}s... (${tentativa}/${tentativas})\x1b[0m\n`);
+                    process.stderr.write(`\x1b[33m⏳ Tentando reconectar em ${espera}s... (${tentativa}/${tentativas})\x1b[0m\n`);
                     await new Promise(r => setTimeout(r, espera * 1000));
                     continue;
                 }
@@ -152,10 +205,10 @@ class GeminiService {
     /**
      * Envia via Google AI Studio (direto)
      */
-    async _enviarGemini(mensagemUsuario, tentativas) {
+    async _enviarGemini(mensagemUsuario, tentativas, opcoes = {}) {
         const contents = [];
 
-        for (const msg of this.chatHistory) {
+        for (const msg of opcoes.usarHistorico === false ? [] : this.chatHistory) {
             contents.push(msg);
         }
 
@@ -170,23 +223,30 @@ class GeminiService {
                     model: this.modelName,
                     contents: contents,
                     config: {
-                        systemInstruction: SYSTEM_PROMPT,
-                        temperature: 0.9,
+                        systemInstruction: opcoes.systemPrompt || SYSTEM_PROMPT,
+                        temperature: opcoes.json ? 0.4 : 0.9,
                         topP: 0.95,
-                        maxOutputTokens: 2048,
+                        maxOutputTokens: opcoes.maxTokens || 2048,
+                        ...(opcoes.json ? { responseMimeType: 'application/json' } : {}),
                     }
                 });
 
+                if (opcoes.json) {
+                    this._validarRespostaMundo({
+                        texto: response.text,
+                        motivo: response.candidates?.[0]?.finishReason || 'nao informado',
+                        cortada: response.candidates?.[0]?.finishReason === 'MAX_TOKENS',
+                        tokens: response.usageMetadata?.candidatesTokenCount,
+                        tokensRaciocinio: response.usageMetadata?.thoughtsTokenCount,
+                        limite: opcoes.maxTokens,
+                    });
+                }
                 const respostaTexto = response.text;
 
-                this.chatHistory.push({
-                    role: 'user',
-                    parts: [{ text: mensagemUsuario }]
-                });
-                this.chatHistory.push({
-                    role: 'model',
-                    parts: [{ text: respostaTexto }]
-                });
+                if (opcoes.usarHistorico !== false) {
+                    this.chatHistory.push({ role: 'user', parts: [{ text: mensagemUsuario }] });
+                    this.chatHistory.push({ role: 'model', parts: [{ text: respostaTexto }] });
+                }
 
                 return respostaTexto;
 
@@ -196,18 +256,41 @@ class GeminiService {
 
                 if (ehTemporario && tentativa < tentativas) {
                     const espera = tentativa * 3;
-                    process.stdout.write(`\x1b[33m⏳ API ocupada (${status}). Tentando novamente em ${espera}s... (${tentativa}/${tentativas})\x1b[0m\n`);
+                    process.stderr.write(`\x1b[33m⏳ API ocupada (${status}). Tentando novamente em ${espera}s... (${tentativa}/${tentativas})\x1b[0m\n`);
                     await new Promise(r => setTimeout(r, espera * 1000));
                     continue;
                 }
 
-                if (ehTemporario) {
+                if (ehTemporario && !opcoes.json) {
                     return `⚠️  A API do Gemini está sobrecarregada (erro ${status}). Aguarde ~30 segundos e tente novamente.`;
                 }
 
                 throw error;
             }
         }
+    }
+
+    _validarRespostaMundo({ texto, motivo, cortada, tokens, tokensRaciocinio, limite }) {
+        const vazia = typeof texto !== 'string' || !texto.trim();
+        if (!cortada && !vazia) return;
+
+        const detalhe = `Motivo: ${motivo}; tokens de resposta informados: ${tokens ?? 'nao informados'}; limite solicitado: ${limite}.`;
+        const error = new Error(cortada
+            ? `A API interrompeu a geracao no limite de tokens, antes de concluir o mundo. ${detalhe} Nenhum mundo foi salvo.`
+            : `A API retornou uma resposta vazia para o mundo. ${detalhe} Nenhum mundo foi salvo.`);
+        error.status = 422;
+        error.code = cortada ? 'MUNDO_TRUNCADO' : 'MUNDO_VAZIO';
+        // Somente conteudo gerado e metadados; nunca inclui chave ou cabecalhos da requisicao.
+        error.diagnostico = {
+            provedor: this.provider,
+            modelo: this.modelName,
+            motivo_termino: motivo,
+            limite_solicitado: limite,
+            tokens_resposta: tokens ?? null,
+            tokens_raciocinio: tokensRaciocinio ?? null,
+            resposta_parcial: typeof texto === 'string' ? texto : '',
+        };
+        throw error;
     }
 
     /**

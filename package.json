@@ -5,7 +5,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "chat": "node src/chat-terminal.js"
+    "chat": "node src/chat-terminal.js",
+    "mundo": "node src/chat-terminal.js",
+    "test": "node --test"
   },
   "keywords": [
     "rpg",
@@ -17,6 +19,7 @@
   "dependencies": {
     "@google/genai": "^1.0.0",
     "dotenv": "^16.4.5",
+    "jsonrepair": "^3.15.0",
     "node-fetch": "^3.3.2"
   }
 }

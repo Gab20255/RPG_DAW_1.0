@@ -1,3 +1,5 @@
 node_modules/
 .env
 *.db
+output/mundos/
+output/diagnosticos/
