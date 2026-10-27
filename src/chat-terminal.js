@@ -12,6 +12,7 @@ function obterConfig() {
     const config = {
         model: process.env.GEMINI_MODEL,
         worldMaxTokens: Number(process.env.WORLD_MAX_TOKENS || 3000),
+        narrationMaxTokens: Number(process.env.NARRATION_MAX_TOKENS || 900),
     };
     if (chaveValida(process.env.OPENROUTER_API_KEY)) {
         return { ...config, openrouterKey: process.env.OPENROUTER_API_KEY };

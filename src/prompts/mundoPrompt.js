@@ -1,5 +1,6 @@
 // Contrato inicial do JSON. Os valores abaixo descrevem o que a IA deve preencher.
 // Personagens aqui sao NPCs do mundo; nenhum jogador e criado nesta etapa.
+const { LIMITES_CRIATIVOS } = require('./mestrePrompt');
 const MODELO_MUNDO = {
     versao: '1.0',
     mundo: {
@@ -59,6 +60,25 @@ const MODELO_MUNDO = {
     ganchos_aventura: ['Situacao que pode iniciar uma aventura futura'],
 };
 
+// Deriva o schema do contrato existente para nao manter duas estruturas manuais.
+function criarSchema(valor) {
+    if (Array.isArray(valor)) {
+        // As listas vazias do contrato sao referencias (IDs em texto).
+        return { type: 'array', items: criarSchema(valor[0] ?? '') };
+    }
+    if (valor && typeof valor === 'object') {
+        return {
+            type: 'object',
+            properties: Object.fromEntries(Object.entries(valor).map(([chave, item]) => [chave, criarSchema(item)])),
+            required: Object.keys(valor),
+            additionalProperties: false,
+        };
+    }
+    return { type: typeof valor === 'number' ? 'integer' : typeof valor };
+}
+
+const MUNDO_SCHEMA = criarSchema(MODELO_MUNDO);
+
 function criarMundoPrompt(maxTokens = 3000) {
     const compacto = maxTokens < 4000;
     return `Voce e um criador de mundos de RPG. Sua unica tarefa e gerar a base completa de uma campanha em um unico objeto JSON.
@@ -83,6 +103,10 @@ REGRAS:
 - ${compacto ? 'Use no maximo 2 racas/povos, 1 evento historico e 1 gancho de aventura. Nas listas narrativas (segredos, perigos, tracos etc.), use 1 entrada. Preserve todas as secoes e seus campos.' : 'Preencha as listas narrativas com os detalhes necessarios para a campanha.'}
 - ${compacto ? 'O mundo deve ser uma base inicial completa em estrutura, com conteudo curto para expansao futura. Priorize encerrar todas as secoes do JSON. Nao tente descrever uma enciclopedia inteira do universo solicitado.' : 'Mantenha o conteudo dentro do limite de resposta.'}
 - versao deve ser "1.0". Nao copie os textos explicativos do modelo.
+
+PODERES E LIMITES DO PROJETO:
+As habilidades das classes neste JSON sao apenas ideias narrativas. O jogador escolhera depois dois templates mecanicos validados pelo Node.js; nao conceda dano, recursos ou efeitos extras por meio das descricoes.
+${LIMITES_CRIATIVOS}
 
 MODELO DE ESTRUTURA (expanda os arrays conforme as quantidades solicitadas):
 ${JSON.stringify(MODELO_MUNDO, null, 2)}`;
@@ -149,4 +173,4 @@ function validarMundo(mundo) {
     return mundo;
 }
 
-module.exports = { MUNDO_PROMPT, MODELO_MUNDO, criarMundoPrompt, validarMundo };
+module.exports = { MUNDO_PROMPT, MODELO_MUNDO, MUNDO_SCHEMA, criarMundoPrompt, validarMundo };

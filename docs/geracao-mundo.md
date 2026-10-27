@@ -10,6 +10,12 @@ Respostas vazias e respostas cortadas agora geram mensagens distintas, com motiv
 
 Com `google/gemini-2.5-flash` no OpenRouter, a geracao do mundo desativa o raciocinio opcional para reservar os tokens ao JSON. [Controle de raciocinio no OpenRouter](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
 
+Com `deepseek/deepseek-v4-flash-0731` (familia V4 Flash), o servico envia `reasoning: { enabled: false }` tanto na geracao do mundo quanto nas narracoes e mensagens. Esse modelo ativa raciocinio alto por padrao; o catalogo do OpenRouter informa que ele e opcional. Desativa-lo evita consumir o limite inteiro pensando antes de produzir texto. Isso reduz o trabalho do modelo, mas a latencia ainda depende do provedor. Outros modelos DeepSeek que exigem raciocinio nao recebem essa configuracao automaticamente.
+
+Para uma base inicial compacta com esse modelo, use `GEMINI_MODEL=deepseek/deepseek-v4-flash-0731` e `WORLD_MAX_TOKENS=3500`. Nao e necessario aumentar o limite para 12000 ou 20000 apenas para acomodar raciocinio. Esse limite continua sendo um teto: se o proprio JSON nao couber, a resposta sera rejeitada. Os erros agora mostram tambem os tokens de raciocinio e avisam quando nao houve texto visivel. Nao ha aumento de tokens nem troca de modelo automatica.
+
+As chamadas ao DeepSeek V4 Flash priorizam provedores por velocidade de geracao (`sort: "throughput"`) e exigem suporte aos parametros. Baidu e excluido porque devolveu JSON malformado repetidamente nos testes reais, inclusive com schema estrito. O modelo permanece o mesmo; precos e disponibilidade dependem do provedor selecionado pelo OpenRouter.
+
 ```sh
 npm run mundo
 ```
@@ -49,7 +55,7 @@ O formato e o prompt estao em `src/prompts/mundoPrompt.js`. O metodo `GeminiServ
 
 Ha validacao de estrutura/tipos e das referencias por ID antes de salvar. Pequenos erros de sintaxe, como um colchete faltando no meio de um objeto encerrado, sao tratados com [jsonrepair](https://github.com/josdejong/jsonrepair), sem outra chamada a IA. Respostas cortadas pelo limite de tokens, vazias ou com estrutura incompleta geram erro e nao sao salvas como mundo.
 
-O modo JSON do OpenRouter usa `response_format: { type: "json_object" }`; o modelo/provedor escolhido precisa aceitar esse parametro. O caminho Google direto usa `responseMimeType: "application/json"`.
+O modo JSON do OpenRouter usa `response_format: { type: "json_object" }`; o modelo/provedor escolhido precisa aceitar esse parametro. Para gerar mundos com DeepSeek V4 Flash, usa `json_schema` estrito, derivado de `MODELO_MUNDO`, e `provider.require_parameters: true` para selecionar provedores que aceitam os parametros. Isso reforca a estrutura sem pedir uma segunda geracao para corrigir campos. A validacao local dos campos e referencias continua obrigatoria. O caminho Google direto usa `responseMimeType: "application/json"`.
 
 Referencias: [OpenRouter - parametros](https://github.com/OpenRouterTeam/docs/blob/main/api_reference/parameters.mdx) e [Google - saida estruturada](https://ai.google.dev/gemini-api/docs/generate-content/structured-output).
 
