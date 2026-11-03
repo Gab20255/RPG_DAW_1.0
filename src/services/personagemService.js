@@ -12,7 +12,7 @@ function calcularAtributos(classe) {
         positivos += Math.max(0, bonus);
         atributos[chave] = REGRAS.atributoBase + bonus;
     }
-    if (positivos > REGRAS.somaBonusPositivosMaxima) throw new Error('A classe excede o orçamento de +6 em bônus positivos. Revise o JSON.');
+    if (positivos > REGRAS.somaBonusPositivosMaxima) throw new Error('A classe excede o orçamento de +6 em bônus positivos.');
     return atributos;
 }
 
@@ -23,11 +23,11 @@ function texto(valor, campo, min, max) {
 
 function criarPersonagem(pedido, mundo) {
     const campos = ['mundo_id', 'nome', 'classe_id', 'raca_id', 'descricao_visual', 'habilidades_ids'];
-    if (!pedido || typeof pedido !== 'object' || Array.isArray(pedido) || Object.keys(pedido).some((chave) => !campos.includes(chave))) throw new Error('Envie apenas nome, classe, povo, aparência e IDs de habilidades. Os números são calculados no servidor.');
+    if (!pedido || typeof pedido !== 'object' || Array.isArray(pedido) || Object.keys(pedido).some((chave) => !campos.includes(chave))) throw new Error('Campos da ficha inválidos.');
     const classe = mundo.classes.find((item) => item.id === pedido.classe_id);
-    if (!classe) throw new Error('Escolha uma classe deste mundo.');
+    if (!classe) throw new Error('Classe inválida.');
     const raca = mundo.racas.find((item) => item.id === pedido.raca_id);
-    if (mundo.racas.length && !raca) throw new Error('Escolha um povo deste mundo.');
+    if (mundo.racas.length && !raca) throw new Error('Origem inválida.');
     if (!mundo.racas.length && pedido.raca_id) throw new Error('Este mundo não possui povos selecionáveis.');
     const habilidades = selecionarHabilidades(pedido.habilidades_ids, REGRAS.nivelInicial, REGRAS.habilidadesIniciais);
     return {
@@ -49,11 +49,11 @@ function criarPersonagem(pedido, mundo) {
 
 function validarPersonagem(ficha, mundo) {
     if (!ficha || typeof ficha.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(ficha.id)) throw new Error('Identificador da ficha inválido.');
-    if (ficha.versao_regras !== REGRAS.versao) throw new Error('A ficha usa outra versão de regras. Recrie o personagem.');
+    if (ficha.versao_regras !== REGRAS.versao) throw new Error('Versão de regras incompatível.');
     const original = criarPersonagem({ mundo_id: ficha.mundo_id, nome: ficha.nome, classe_id: ficha.classe_id, raca_id: ficha.raca_id,
         descricao_visual: ficha.descricao_visual, habilidades_ids: ficha.habilidades?.map((h) => h.id) }, mundo);
     for (const campo of ['classe', 'raca', 'nivel', 'vida', 'vida_max', 'energia', 'energia_max', 'atributos', 'habilidades', 'inventario']) {
-        if (!isDeepStrictEqual(ficha[campo], original[campo])) throw new Error(`A ficha contém ${campo} incompatível com as regras. Recrie o personagem pelo terminal.`);
+        if (!isDeepStrictEqual(ficha[campo], original[campo])) throw new Error(`A ficha contém ${campo} incompatível com as regras.`);
     }
     return { ...original, id: ficha.id, criado_em: ficha.criado_em, mundo_hash: ficha.mundo_hash, mundo_arquivo: ficha.mundo_arquivo };
 }

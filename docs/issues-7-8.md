@@ -5,20 +5,16 @@ Esta implementação conclui o fluxo de seleção da Issue #7 e a integração d
 ## Criar o personagem
 
 ```powershell
-npm run personagem
+npm start
 ```
 
-`npm start` abre o mesmo assistente. Nenhuma chave de API é necessária para essa etapa.
+Dentro da entrada única, `/novo` recebe nome, história e tom, seleciona uma de cinco bases prontas e faz uma adaptação narrativa curta. São até duas consultas: seleção (120 tokens de saída) e adaptação com abertura (1.400). Mecânicas e IDs são preservados. O programa salva e exibe a história inicial, sem iniciar a ficha; quantidade de participantes e escolha de personagens ficam para a próxima etapa. `/carregar` também abre essas preparações sem API. `/retomar` e `/expandir "geracao.json"` mantêm a geração antiga por agentes. Para importar a abertura de um mundo JSON sem consultar a API: `/novo "output/mundos/arquivo.json"`.
 
-O fluxo lista os JSONs válidos de `output/mundos`, permite selecionar a classe e o povo/origem, solicita nome e aparência, apresenta o catálogo mecânico e pede duas habilidades. Na revisão é possível trocar identidade, classe, origem ou habilidades. Digitar `/sair` ou cancelar não salva um personagem incompleto.
+Depois da apresentação do mundo, o fluxo permite selecionar a classe e o povo/origem, solicita nome e aparência, apresenta o catálogo mecânico e pede duas habilidades. Na revisão é possível trocar identidade, classe, origem ou habilidades. Digitar `/sair` ou cancelar não salva um personagem incompleto. As perguntas usam apenas rótulos curtos, sem orientações no terminal.
 
-Também é possível informar um mundo diretamente:
+Para usar outro mundo, informe o caminho do JSON no comando `/novo`.
 
-```powershell
-npm run personagem -- "C:\caminho\mundo.json"
-```
-
-A ficha completa é salva como um único JSON em `output/personagens`. Inclui atributos, vida, energia, itens iniciais, habilidades validadas, versão das regras, origem do mundo e hash do JSON. Os NPCs do mundo continuam separados da ficha do jogador. O arquivo está pronto para outro integrante adaptar à camada de persistência.
+A ficha completa passa a fazer parte do RPG único em `output/rpgs`. Inclui atributos, vida, energia, itens iniciais, habilidades validadas, versão das regras, origem do mundo e hash do JSON. Os NPCs do mundo continuam separados da ficha do jogador. Fichas antigas de `output/personagens` podem ser importadas em `/carregar`.
 
 As descrições de habilidades geradas no mundo são ideias narrativas. As habilidades da ficha são escolhidas do catálogo mecânico do projeto, evitando transformar uma descrição em vantagem numérica.
 
@@ -34,25 +30,17 @@ O personagem começa no nível 1, com 100 de vida, 100 de energia e duas habilid
 
 ## Conferir o que será enviado à IA sem gastar créditos
 
-```powershell
-npm run contexto
-```
+Dentro do programa, use `/contexto` com um RPG aberto.
 
-Selecione uma ficha criada no passo anterior. O comando salva `instrucao_sistema` e `contexto` em `output/contextos`, sem consultar OpenRouter ou Gemini. Também aceita o caminho de uma ficha:
-
-```powershell
-npm run contexto -- "C:\caminho\personagem.json"
-```
+O comando salva `instrucao_sistema` e `contexto` em `output/contextos`, sem consultar OpenRouter ou Gemini. Para abrir uma ficha antiga, use `/carregar` antes.
 
 O contexto contém o tema e o tom, resumo da campanha, ficha oficial, habilidades e seus números, cena atual, NPCs presentes, últimos resultados e resultado da ação que precisa ser narrada. Campos são selecionados explicitamente; chaves de API, segredos e dados de outros mundos não são copiados.
 
 ## Narrar no terminal
 
-```powershell
-npm run jogar
-```
+Use `/observar`, `/falar texto` ou uma ação no mesmo terminal depois de criar ou carregar um RPG.
 
-Essa etapa usa a chave já configurada no `.env`, somente quando há uma narração nova para solicitar. `NARRATION_MAX_TOKENS` limita a resposta e tem padrão de 900, independente de `WORLD_MAX_TOKENS`.
+Essa etapa usa a chave já configurada no `.env`, somente quando há uma narração nova para solicitar. `NARRATION_MAX_TOKENS` limita a resposta e tem padrão de 1600 na entrada única, independente de `WORLD_MAX_TOKENS`.
 
 | Comando | Comportamento |
 | --- | --- |
@@ -65,12 +53,11 @@ Essa etapa usa a chave já configurada no `.env`, somente quando há uma narraç
 | `/ir 1` | Node.js valida e registra a mudança para a conexão número 1. |
 | `/contexto` | Exporta o contexto sem chamada de API. |
 | `/repetir` | Reutiliza o último resultado, sem rolar dados ou aplicar mudanças novamente. |
-| `/ajuda` | Lista os comandos. |
 | `/sair` | Encerra a sessão. |
 
 Os nomes de atributos dos testes são `forca`, `destreza`, `inteligencia`, `carisma`, `constituicao` e `sabedoria`. A dificuldade fixa 12 é uma regra de protótipo; não vem da IA. O resultado do teste não concede itens, cura ou alterações de cenário adicionais. Ações em texto livre são intenções; o Mestre deve pedir esclarecimento quando faltarem regras para resolvê-las.
 
-Antes de consultar a IA, o programa salva o resultado oficial em `output/partidas`. Uma falha de API preserva esse resultado. `/repetir` usa o mesmo ID e o mesmo D20. Se já existir uma narração válida, ela é reutilizada sem outra consulta. Ao reabrir a mesma ficha, a partida é retomada se mundo, regras e ficha forem compatíveis.
+Antes de consultar a IA, o programa salva o resultado oficial no RPG completo em `output/rpgs`. Uma falha de API preserva esse resultado. `/repetir` usa o mesmo ID e o mesmo D20. Se já existir uma narração válida, ela é reutilizada sem outra consulta. `/carregar` retoma o RPG com sua ficha, mundo e histórico incorporados.
 
 ## Limites criativos e contrato de resposta
 
@@ -100,10 +87,6 @@ Não há interface visual, conexão ao banco ou implementação completa de comb
 
 Fontes do grupo: `Limites_Criativos_Para_IA.pdf` e `Documento_Sistema_Balanceado_de_Habilidades.docx`. Os arquivos originais não foram alterados.
 
-## Verificação
+## Verificação manual
 
-```powershell
-npm test
-```
-
-Os testes usam entrada real de terminal em memória, arquivos temporários e respostas simuladas de OpenRouter/Gemini. Verificam escolha e revisão de ficha, cancelamento, limites, adulteração, contexto, campos proibidos, IDs, propostas pendentes e repetição sem recalcular resultados. Não gastam créditos de API.
+O roteiro para conferir criação, carregamento, edição e narração está no `README.md`. Execute `npm start` para usar a entrada única do programa.

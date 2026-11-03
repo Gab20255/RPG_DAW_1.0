@@ -3,8 +3,8 @@ const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const RAIZ = path.resolve(__dirname, '../..');
 
-async function lerJson(arquivo) {
-    if ((await fs.stat(arquivo)).size > 1024 * 1024) throw new Error('O JSON deve ter até 1 MB.');
+async function lerJson(arquivo, limite = 1024 * 1024) {
+    if ((await fs.stat(arquivo)).size > limite) throw new Error(`O JSON excede o limite de ${Math.round(limite / 1024 / 1024)} MB.`);
     return JSON.parse(await fs.readFile(arquivo, 'utf8'));
 }
 

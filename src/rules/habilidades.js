@@ -78,7 +78,7 @@ function listarHabilidades(nivel = 1) {
 }
 
 function selecionarHabilidades(ids, nivel = 1, maximo = 2) {
-    if (!Array.isArray(ids) || ids.length !== maximo || new Set(ids).size !== ids.length) throw new Error(`Escolha exatamente ${maximo} habilidades diferentes.`);
+    if (!Array.isArray(ids) || ids.length !== maximo || new Set(ids).size !== ids.length) throw new Error(`Seleção inválida: ${maximo} habilidades distintas.`);
     return ids.map((id) => {
         const habilidade = listarHabilidades(nivel).find((item) => item.id === id);
         if (!habilidade) throw new Error('Habilidade desconhecida.');

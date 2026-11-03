@@ -2,15 +2,9 @@
   "name": "rpg-multiplayer-gemini",
   "version": "1.0.0",
   "description": "RPG de Texto Multiplayer Cooperativo em Tempo Real com Google Gemini como Mestre do Jogo",
-  "main": "src/personagem-terminal.js",
+  "main": "src/rpg-terminal.js",
   "scripts": {
-    "start": "node src/personagem-terminal.js",
-    "chat": "node src/chat-terminal.js",
-    "mundo": "node src/chat-terminal.js",
-    "test": "node --test",
-    "personagem": "node src/personagem-terminal.js",
-    "contexto": "node src/mestre-terminal.js --contexto",
-    "jogar": "node src/mestre-terminal.js"
+    "start": "node src/rpg-terminal.js"
   },
   "keywords": [
     "rpg",

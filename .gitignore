@@ -2,7 +2,9 @@ node_modules/
 .env
 *.db
 output/mundos/
+output/geracoes/
 output/diagnosticos/
 output/personagens/
 output/partidas/
 output/contextos/
+output/rpgs/

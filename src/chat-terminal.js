@@ -7,38 +7,24 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const GeminiService = require('./services/geminiService');
 
-function obterConfig() {
-    const chaveValida = (chave) => chave && chave.trim() && !/^sua_chave/i.test(chave.trim());
-    const config = {
-        model: process.env.GEMINI_MODEL,
-        worldMaxTokens: Number(process.env.WORLD_MAX_TOKENS || 3000),
-        narrationMaxTokens: Number(process.env.NARRATION_MAX_TOKENS || 900),
-    };
-    if (chaveValida(process.env.OPENROUTER_API_KEY)) {
-        return { ...config, openrouterKey: process.env.OPENROUTER_API_KEY };
-    }
-    if (chaveValida(process.env.GEMINI_API_KEY)) {
-        return { ...config, geminiKey: process.env.GEMINI_API_KEY };
-    }
-    throw new Error('Configure OPENROUTER_API_KEY ou GEMINI_API_KEY no arquivo .env.');
-}
+const { obterConfiguracao: obterConfig } = require('./services/configuracaoService');
 
 async function main() {
-    require('dotenv').config({ quiet: true });
+    require('dotenv').config({ path: path.resolve(__dirname, '..', '.env'), override: true, quiet: true });
     const servico = new GeminiService(obterConfig());
     let tema = process.argv.slice(2).join(' ').trim();
 
     if (!tema) {
         const terminal = readline.createInterface({ input: process.stdin, output: process.stderr });
         try {
-            tema = (await terminal.question('Tema e detalhes do mundo: ')).trim();
+            tema = (await terminal.question('História: ')).trim();
         } finally {
             terminal.close();
         }
     }
     if (!tema) throw new Error('O tema nao pode ficar vazio.');
 
-    console.error(`\nGerando mundo com ${servico.getProvedor()}...`);
+    console.error('\nMundo…');
     let mundo;
     try {
         mundo = await servico.gerarMundo(tema);
@@ -49,9 +35,9 @@ async function main() {
             try {
                 await fs.mkdir(pasta, { recursive: true });
                 await fs.writeFile(arquivo, `${JSON.stringify(error.diagnostico, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
-                console.error(`Diagnostico da resposta salvo em: ${arquivo}`);
+                console.error(`Diagnóstico: ${arquivo}`);
             } catch (falhaArquivo) {
-                console.error(`Nao foi possivel salvar o diagnostico: ${falhaArquivo.message}`);
+                console.error(`Erro: ${falhaArquivo.message}`);
             }
         }
         throw error;
@@ -64,7 +50,7 @@ async function main() {
     await fs.writeFile(arquivo, json, { encoding: 'utf8', flag: 'wx' });
 
     console.log(json);
-    console.error(`Mundo salvo em: ${arquivo}`);
+    console.error(`Mundo: ${arquivo}`);
 }
 
 if (require.main === module) {
