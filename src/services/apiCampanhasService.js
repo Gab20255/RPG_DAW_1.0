@@ -133,7 +133,7 @@ class ApiCampanhas {
             const pedido = mundo.campanha.pendente;
             if (!pedido || pedido.id !== corpo.pedido_id) throw new ErroAplicacao(409, 'PEDIDO_INCOMPATIVEL', 'A cena pendente mudou.');
             if ((corpo.participante_id ?? null) !== pedido.participante_id) throw new ErroAplicacao(409, 'AUTOR_INCOMPATIVEL', 'O pedido pertence a outro participante.');
-            if (pedido.teste) throw new ErroAplicacao(409, 'TESTE_JA_RESOLVIDO', 'Uma rolagem já registrada não pode ser descartada.');
+            if (pedido.teste || pedido.resultado) throw new ErroAplicacao(409, 'ACAO_JA_RESOLVIDA', 'Uma ação já resolvida não pode ser descartada.');
             await condutor.executar('/descartar', { participanteId: corpo.participante_id ?? null });
             return this.carregar(id);
         });

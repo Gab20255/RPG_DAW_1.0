@@ -15,6 +15,7 @@ const { obterParticipante } = require('./services/participantesCampanhaService')
 const { descreverTeste } = require('./rules/testes');
 const { montarContextoCampanha } = require('./services/contextoCampanhaService');
 const { PROMPT_CAMPANHA } = require('./prompts/campanhaPrompt');
+const { prepararEstadoMecanico, idJogador } = require('./services/combateService');
 
 const { obterConfiguracao } = require('./services/configuracaoService');
 
@@ -47,7 +48,9 @@ class AplicacaoRpg {
         if (!this.preparacao) return this.exigirRpg().estado.personagem;
         const participante = obterParticipante(this.preparacao.dados.campanha, this.participanteId);
         if (!participante) throw new Error('Nenhuma ficha vinculada.');
-        return participante.ficha;
+        const mundo = this.preparacao.dados;
+        const estado = prepararEstadoMecanico(mundo.campanha, obterMundoCampanha(mundo, mundo.campanha)).combatentes.find(item => item.id === idJogador(participante.id));
+        return { ...participante.ficha, vida: estado.vida, energia: estado.energia };
     }
 
     async vincularFicha(argumento) {
@@ -61,6 +64,7 @@ class AplicacaoRpg {
     }
 
     mostrarTeste(cena) {
+        if (cena.resultado) { this.terminal.escrever(`\n${cena.resultado.eventos.join('\n')}`); return; }
         const participante = this.preparacao.dados.campanha.participantes.find(item => item.id === cena.participante_id);
         this.terminal.escrever(`\n${participante.ficha.nome} — ${descreverTeste(cena.teste)}`);
     }
@@ -195,6 +199,9 @@ class AplicacaoRpg {
         this.terminal.escrever('\nTestes');
         campanha.diario.filter(cena => cena.teste).forEach(cena => this.terminal.escrever(`[${cena.turno}] ${cena.participante_id}: ${descreverTeste(cena.teste)}`));
         if (campanha.pendente?.teste) this.terminal.escrever(`Pendente — ${campanha.pendente.participante_id}: ${descreverTeste(campanha.pendente.teste)}`);
+        this.terminal.escrever('\nResultados mecânicos');
+        campanha.diario.filter(cena => cena.resultado).forEach(cena => this.terminal.escrever(`[${cena.turno}] ${cena.participante_id}: ${cena.resultado.resumo}`));
+        if (campanha.pendente?.resultado) this.terminal.escrever(`Pendente — ${campanha.pendente.participante_id}: ${campanha.pendente.resultado.resumo}`);
         const mundo = obterMundoCampanha(this.preparacao.dados, campanha);
         this.terminal.escrever(`\nNPCs encontrados\n${campanha.memoria.npcs_encontrados.map(id => mundo.personagens.find(npc => npc.id === id).nome).join(', ')}`);
     }
@@ -447,6 +454,13 @@ class AplicacaoRpg {
         else if (nome === '/enriquecer') await this.enriquecerRpg();
         else if (nome === '/contexto') await this.exportarContexto();
         else if (nome === '/memoria') this.mostrarMemoria();
+        else if (nome === '/combate') {
+            if (!this.preparacao) throw new Error('Nenhuma campanha aberta.');
+            const mundo = this.preparacao.dados;
+            const estado = prepararEstadoMecanico(mundo.campanha, obterMundoCampanha(mundo, mundo.campanha));
+            this.terminal.escrever(`Combate: ${estado.encontro?.estado || 'inativo'}${estado.encontro ? ` — Rodada ${estado.encontro.rodada}` : ''}`);
+            estado.combatentes.filter(item => item.ambiente_id === mundo.campanha.ambiente_id).forEach(item => this.terminal.escrever(`${item.id} — ${item.nome} | Vida ${item.vida}/${item.vida_max} | Energia ${item.energia}/${item.energia_max} | Posição ${item.posicao} m${estado.encontro?.agiram_ids.includes(item.id) ? ' | Já agiu' : ''}${estado.encontro?.retirados_ids.includes(item.id) ? ' | Retirado' : ''}\nEfeitos: ${item.efeitos.map(efeito => `${efeito.tipo} (${efeito.turnos})`).join(', ') || 'nenhum'} | Recargas: ${item.recargas.filter(recarga => recarga.disponivel_no_turno > item.turnos + 1).map(recarga => `${recarga.habilidade_id} (${recarga.disponivel_no_turno - item.turnos - 1})`).join(', ') || 'nenhuma'}`));
+        }
         else if (nome === '/vincular') await this.vincularFicha(argumento);
         else if (nome === '/jogador') {
             if (!this.preparacao) throw new Error('Nenhuma campanha narrativa aberta.');
@@ -480,7 +494,7 @@ class AplicacaoRpg {
         } else if (nome === '/historico') {
             const eventos = this.preparacao ? this.preparacao.dados.campanha.diario.slice(-10) : this.exigirRpg().estado.eventos.slice(-10);
             if (!eventos.length) this.terminal.escrever('Ainda não há acontecimentos.');
-            eventos.forEach((evento) => this.terminal.escrever(`\n${evento.participante_id ? `Participante: ${evento.participante_id}\n` : ''}Ação: ${evento.acao}\n${evento.teste ? `${descreverTeste(evento.teste)}\n` : ''}${evento.resumo}\n${typeof evento.narracao === 'string' ? evento.narracao : evento.narracao?.narracao || 'Narração pendente.'}`));
+            eventos.forEach((evento) => this.terminal.escrever(`\n${evento.participante_id ? `Participante: ${evento.participante_id}\n` : ''}Ação: ${evento.acao}\n${evento.teste ? `${descreverTeste(evento.teste)}\n` : ''}${evento.resultado ? `${evento.resultado.resumo}\n` : ''}${evento.resumo}\n${typeof evento.narracao === 'string' ? evento.narracao : evento.narracao?.narracao || 'Narração pendente.'}`));
         } else if (this.preparacao) await this.continuarCampanha(entrada);
         else await this.narrarAcao(entrada);
         return true;

@@ -1,12 +1,13 @@
 const { obterMundoCampanha } = require('../services/campanhaService');
 const { hashBaseCampanha } = require('../services/participantesCampanhaService');
+const { prepararEstadoMecanico, apresentarResultadoMecanico, idJogador } = require('../services/combateService');
 
 function selecionar(campos, objeto) {
     return Object.fromEntries(campos.filter(campo => Object.hasOwn(objeto, campo)).map(campo => [campo, structuredClone(objeto[campo])]));
 }
 
 function apresentarCena(cena) {
-    return cena ? selecionar(['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'participante_id', 'personagem_id', 'teste', 'narracao', 'resumo', 'exige_resolucao_mecanica'], cena) : null;
+    return cena ? { ...selecionar(['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'participante_id', 'personagem_id', 'teste', 'narracao', 'resumo', 'exige_resolucao_mecanica'], cena), resultado: apresentarResultadoMecanico(cena.resultado) } : null;
 }
 
 function apresentarFicha(ficha) {
@@ -23,6 +24,7 @@ function resumirCampanha(mundo) {
 function apresentarCampanha(mundo) {
     const campanha = mundo.campanha;
     const atual = obterMundoCampanha(mundo, campanha);
+    const mecanica = prepararEstadoMecanico(campanha, atual);
     const colecoes = {
         classes: ['id', 'nome', 'descricao', 'bonus_atributos', 'habilidades', 'itens_iniciais_ids'],
         racas: ['id', 'nome', 'descricao', 'tracos'],
@@ -40,8 +42,12 @@ function apresentarCampanha(mundo) {
         direcao: selecionar(['conflito', 'objetivo', 'gancho'], campanha.direcao),
         direcao_definida: campanha.direcao_definida,
         objetivos: structuredClone(campanha.objetivos), memoria: structuredClone(campanha.memoria),
-        participantes: campanha.participantes.map(({ id, ficha, ingresso_no_turno }) => ({ id, ingresso_no_turno,
-            ficha: { ...apresentarFicha(ficha), inventario: ficha.inventario.map(item => selecionar(colecoes.itens, item)) } })),
+        participantes: campanha.participantes.map(({ id, ficha, ingresso_no_turno }) => {
+            const estado = mecanica.combatentes.find(item => item.id === idJogador(id));
+            return { id, ingresso_no_turno, ficha: { ...apresentarFicha(ficha), vida: estado.vida, energia: estado.energia,
+                inventario: ficha.inventario.map(item => selecionar(colecoes.itens, item)) } };
+        }),
+        mecanica: { encontro: mecanica.encontro, combatentes: mecanica.combatentes.filter(item => item.ambiente_id === campanha.ambiente_id) },
         pendente: apresentarCena(campanha.pendente), ultima_cena: apresentarCena(campanha.diario.at(-1)), desfecho: campanha.desfecho,
         preparacao: { selecao: mundo.origem?.selecao || null, adaptacao: mundo.preparacao?.adaptacao || null },
         mundo: {

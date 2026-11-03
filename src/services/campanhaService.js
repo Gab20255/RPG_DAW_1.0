@@ -4,6 +4,8 @@ const { validarMundo } = require('../prompts/mundoPrompt');
 const { MODELO_CENA, conferirCampos, conferirTexto, conferirLista, chaveTexto, identificadorTexto, validarDirecao } = require('../rules/narrativa');
 const { interpretarTeste, resolverTeste } = require('../rules/testes');
 const { prepararFichaCampanha, validarParticipantes, validarIdentificador, obterParticipante, conferirAutoria } = require('./participantesCampanhaService');
+const { iniciarMecanica, prepararEstadoMecanico, conferirOrigens, resolverAcaoMecanica, validarResultadoMecanico, idJogador } = require('./combateService');
+const { interpretarAcaoMecanica } = require('./interpretacaoAcaoService');
 
 function iniciarCampanha(mundo) {
     validarMundo(mundo);
@@ -13,7 +15,7 @@ function iniciarCampanha(mundo) {
         desfechos_possiveis: ['O grupo pode resolver o conflito, negociar uma alternativa ou abandonar o objetivo com consequências.'],
     };
     return {
-        versao: '1.1', id: criarIdentificador(), turno: 0, estado: 'em_andamento', participantes: [],
+        versao: '1.2', id: criarIdentificador(), turno: 0, estado: 'em_andamento', participantes: [], mecanica: iniciarMecanica(),
         direcao, direcao_definida: Boolean(mundo.historia.direcao), ambiente_id: mundo.mundo.ambiente_inicial_id,
         resumo: mundo.historia.preludio.slice(0, 1600),
         memoria: { fatos: [], pistas: [], decisoes: [], acontecimentos: [], npcs_encontrados: [] },
@@ -43,16 +45,35 @@ function obterMundoCampanha(mundo, campanha) {
 }
 
 function validarCampanha(campanha, mundo) {
-    const comFichas = campanha?.versao === '1.1';
-    conferirCampos(campanha, ['versao', 'id', 'turno', 'estado', 'direcao', 'direcao_definida', 'ambiente_id', 'resumo', 'memoria', 'objetivos', 'conteudo', 'diario', 'pendente', 'desfecho', ...(comFichas ? ['participantes'] : [])], 'Campanha');
+    const comMecanica = campanha?.versao === '1.2';
+    const comFichas = ['1.1', '1.2'].includes(campanha?.versao);
+    conferirCampos(campanha, ['versao', 'id', 'turno', 'estado', 'direcao', 'direcao_definida', 'ambiente_id', 'resumo', 'memoria', 'objetivos', 'conteudo', 'diario', 'pendente', 'desfecho', ...(comFichas ? ['participantes'] : []), ...(comMecanica ? ['mecanica'] : [])], 'Campanha');
     conferirTexto(campanha.id, 80, 'ID da campanha');
-    if (!['1.0', '1.1'].includes(campanha.versao) || !/^[a-zA-Z0-9_-]{1,80}$/.test(campanha.id) || !Number.isInteger(campanha.turno) || campanha.turno < 0 || !['em_andamento', 'concluida'].includes(campanha.estado) || typeof campanha.direcao_definida !== 'boolean') throw new Error('Estado da campanha inválido.');
+    if (!['1.0', '1.1', '1.2'].includes(campanha.versao) || !/^[a-zA-Z0-9_-]{1,80}$/.test(campanha.id) || !Number.isInteger(campanha.turno) || campanha.turno < 0 || !['em_andamento', 'concluida'].includes(campanha.estado) || typeof campanha.direcao_definida !== 'boolean') throw new Error('Estado da campanha inválido.');
     if (comFichas) validarParticipantes(campanha, mundo);
     validarDirecao(campanha.direcao);
     conferirTexto(campanha.resumo, 1600, 'Resumo');
     conferirCampos(campanha.conteudo, ['ambientes', 'personagens', 'criaturas', 'itens', 'missoes'], 'Conteúdo');
     for (const lista of Object.values(campanha.conteudo)) if (!Array.isArray(lista)) throw new Error('Catálogo da campanha inválido.');
     const atual = obterMundoCampanha(mundo, campanha);
+    if (comMecanica) conferirOrigens(campanha.mecanica, campanha, atual);
+    const tiposCena = ['observacao', 'dialogo', 'transicao', 'intencao', ...(comFichas ? ['teste'] : []), ...(comMecanica ? ['mecanica'] : [])];
+    let mecanicaAnterior = iniciarMecanica();
+    function conferirMecanica(cena) {
+        if (!comMecanica) return;
+        if (cena.tipo !== 'mecanica') { if (cena.resultado !== null) throw new Error('Resultado em cena incompatível.'); return; }
+        const autor = obterParticipante(campanha, cena.participante_id);
+        if (!autor || !cena.resultado || cena.resultado.ambiente_id !== cena.ambiente_id) throw new Error('Resultado mecânico sem autor ou ambiente.');
+        const mundoAnterior = { ...atual };
+        for (const colecao of ['personagens', 'criaturas']) mundoAnterior[colecao] = [...mundo[colecao], ...campanha.conteudo[colecao].filter(item => Number(item.id.split('_').at(-1)) < cena.turno)];
+        const esperadoAntes = prepararEstadoMecanico({ ...campanha, ambiente_id: cena.ambiente_id, mecanica: mecanicaAnterior,
+            participantes: campanha.participantes.filter(item => item.ingresso_no_turno < cena.turno) }, mundoAnterior);
+        if (!saoIguais(cena.resultado.antes, esperadoAntes)) throw new Error('Resultado rompe a continuidade mecânica da campanha.');
+        const acao = interpretarAcaoMecanica(cena.acao, autor, cena.resultado.antes, cena.ambiente_id);
+        if (!saoIguais(acao, cena.resultado.acao)) throw new Error('Resultado incompatível com a ação solicitada.');
+        validarResultadoMecanico(cena.resultado, autor, campanha, atual);
+        mecanicaAnterior = cena.resultado.depois;
+    }
     if (!atual.ambientes.some(local => local.id === campanha.ambiente_id)) throw new Error('Cena da campanha inexistente.');
     conferirCampos(campanha.memoria, ['fatos', 'pistas', 'decisoes', 'acontecimentos', 'npcs_encontrados'], 'Memória');
     for (const tipo of ['fatos', 'pistas', 'decisoes', 'acontecimentos']) {
@@ -76,13 +97,14 @@ function validarCampanha(campanha, mundo) {
     }
     if (!Array.isArray(campanha.diario) || campanha.diario.length !== campanha.turno || new Set(campanha.diario.map(item => item.id)).size !== campanha.diario.length) throw new Error('Diário inválido.');
     campanha.diario.forEach((cena, indice) => {
-        conferirCampos(cena, ['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'narracao', 'resumo', 'exige_resolucao_mecanica', ...(comFichas ? ['participante_id', 'personagem_id', 'teste'] : [])], 'Cena salva');
+        conferirCampos(cena, ['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'narracao', 'resumo', 'exige_resolucao_mecanica', ...(comFichas ? ['participante_id', 'personagem_id', 'teste'] : []), ...(comMecanica ? ['resultado'] : [])], 'Cena salva');
         conferirTexto(cena.id, 80, 'ID da cena');
         conferirTexto(cena.acao, 1000, 'Ação');
         conferirTexto(cena.narracao, 4000, 'Narração');
         conferirTexto(cena.resumo, 1600, 'Resumo');
-        if (cena.turno !== indice + 1 || !['observacao', 'dialogo', 'transicao', 'intencao', ...(comFichas ? ['teste'] : [])].includes(cena.tipo) || typeof cena.exige_resolucao_mecanica !== 'boolean' || !atual.ambientes.some(item => item.id === cena.ambiente_id)) throw new Error('Cena salva inválida.');
+        if (cena.turno !== indice + 1 || !tiposCena.includes(cena.tipo) || typeof cena.exige_resolucao_mecanica !== 'boolean' || !atual.ambientes.some(item => item.id === cena.ambiente_id)) throw new Error('Cena salva inválida.');
         if (comFichas) conferirAutoria(cena, campanha);
+        conferirMecanica(cena);
     });
     if (campanha.memoria.decisoes.length !== campanha.diario.length || campanha.memoria.decisoes.some((registro, indice) => {
         const cena = campanha.diario[indice];
@@ -92,18 +114,23 @@ function validarCampanha(campanha, mundo) {
     if (ultima && (ultima.resumo !== campanha.resumo || ultima.ambiente_id !== campanha.ambiente_id)) throw new Error('Situação atual incompatível com o diário.');
     if (campanha.objetivos.find(item => item.id === 'objetivo_principal').descricao !== campanha.direcao.objetivo) throw new Error('Objetivo principal incompatível com a direção.');
     if (campanha.pendente !== null) {
-        conferirCampos(campanha.pendente, ['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'resposta', ...(comFichas ? ['participante_id', 'personagem_id', 'teste'] : [])], 'Cena pendente');
+        conferirCampos(campanha.pendente, ['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'resposta', ...(comFichas ? ['participante_id', 'personagem_id', 'teste'] : []), ...(comMecanica ? ['resultado'] : [])], 'Cena pendente');
         const pendente = campanha.pendente;
         conferirTexto(pendente.id, 80, 'Pedido');
         conferirTexto(pendente.acao, 1000, 'Ação pendente');
         const origem = atual.ambientes.find(local => local.id === campanha.ambiente_id);
-        if (pendente.turno !== campanha.turno + 1 || !['observacao', 'dialogo', 'transicao', 'intencao', ...(comFichas ? ['teste'] : [])].includes(pendente.tipo) || campanha.diario.some(cena => cena.id === pendente.id) || (pendente.tipo === 'transicao' ? !origem.conexoes_ids.includes(pendente.ambiente_id) : pendente.ambiente_id !== campanha.ambiente_id)) throw new Error('Cena pendente incompatível.');
+        if (pendente.turno !== campanha.turno + 1 || !tiposCena.includes(pendente.tipo) || campanha.diario.some(cena => cena.id === pendente.id) || (pendente.tipo === 'transicao' ? !origem.conexoes_ids.includes(pendente.ambiente_id) : pendente.ambiente_id !== campanha.ambiente_id)) throw new Error('Cena pendente incompatível.');
         if (comFichas) conferirAutoria(pendente, campanha);
+        conferirMecanica(pendente);
         if (pendente.resposta !== null) validarRespostaCena(pendente.resposta, campanha, atual);
+    }
+    if (comMecanica) {
+        const ultimoResultado = campanha.pendente?.resultado || campanha.diario.findLast(cena => cena.resultado)?.resultado;
+        if (!saoIguais(campanha.mecanica, ultimoResultado?.depois || iniciarMecanica())) throw new Error('Estado mecânico incompatível com o último resultado salvo.');
     }
     if (campanha.estado === 'concluida') {
         conferirTexto(campanha.desfecho, 1200, 'Desfecho');
-        if (campanha.pendente || campanha.objetivos.find(item => item.id === 'objetivo_principal').estado === 'pendente') throw new Error('Encerramento incompatível.');
+        if (campanha.pendente || campanha.mecanica?.encontro?.estado === 'ativo' || campanha.objetivos.find(item => item.id === 'objetivo_principal').estado === 'pendente') throw new Error('Encerramento incompatível.');
     } else if (campanha.desfecho !== null) throw new Error('Desfecho antecipado.');
     return campanha;
 }
@@ -117,6 +144,11 @@ function migrarCampanha(campanha, mundo) {
         for (const cena of [...atualizada.diario, ...(atualizada.pendente ? [atualizada.pendente] : [])]) Object.assign(cena, { participante_id: null, personagem_id: null, teste: null });
         atualizada.memoria.decisoes.forEach(registro => { registro.participante_id = null; });
     }
+    if (atualizada.versao === '1.1') {
+        atualizada.versao = '1.2';
+        atualizada.mecanica = iniciarMecanica();
+        for (const cena of [...atualizada.diario, ...(atualizada.pendente ? [atualizada.pendente] : [])]) cena.resultado = null;
+    }
     return validarCampanha(atualizada, mundo);
 }
 
@@ -124,6 +156,7 @@ function vincularParticipante(campanha, mundo, id, ficha) {
     const proxima = migrarCampanha(campanha, mundo);
     validarIdentificador(id);
     if (proxima.pendente || proxima.estado === 'concluida') throw new Error('Vínculo indisponível com cena pendente ou campanha concluída.');
+    if (proxima.mecanica.encontro?.estado === 'ativo') throw new Error('Vínculo indisponível durante combate.');
     if (proxima.participantes.some(item => item.id === id || item.ficha.id === ficha?.id)) throw new Error('Participante ou ficha já vinculado.');
     proxima.participantes.push({ id, ficha: prepararFichaCampanha(ficha, mundo), ingresso_no_turno: proxima.turno });
     return validarCampanha(proxima, mundo);
@@ -140,10 +173,19 @@ function registrarAcaoCampanha(campanha, mundo, entrada, { participanteId = null
     const acao = entrada.trim();
     let tipo = 'intencao';
     let teste = null;
+    let resultado = null;
     let ambienteId = campanha.ambiente_id;
-    if (acao === '/observar') tipo = 'observacao';
+    const estadoMecanico = prepararEstadoMecanico(campanha, atual);
+    const acaoMecanica = interpretarAcaoMecanica(acao, participante, estadoMecanico, ambienteId);
+    if (acaoMecanica) {
+        resultado = resolverAcaoMecanica(estadoMecanico, acaoMecanica, participante, rolar);
+        proxima.mecanica = structuredClone(resultado.depois);
+        tipo = 'mecanica';
+    } else if (acao === '/observar') tipo = 'observacao';
     else if (/^\/falar\s+\S/.test(acao)) tipo = 'dialogo';
     else if (acao.startsWith('/ir ')) {
+        if (estadoMecanico.encontro?.estado === 'ativo') throw new Error('Deslocamento entre ambientes indisponível durante combate.');
+        if (estadoMecanico.combatentes.some(item => item.tipo === 'jogador' && !item.vida)) throw new Error('O grupo possui personagens incapacitados.');
         const local = atual.ambientes.find(item => item.id === ambienteId);
         const destino = acao.slice(4).trim();
         const id = /^\d+$/.test(destino) ? local.conexoes_ids[Number(destino) - 1] : destino;
@@ -152,12 +194,14 @@ function registrarAcaoCampanha(campanha, mundo, entrada, { participanteId = null
         tipo = 'transicao';
     } else if (/^\/teste(?:\s|$)/.test(acao)) {
         if (!participante) throw new Error('Teste exige uma ficha vinculada.');
+        if (estadoMecanico.encontro?.estado === 'ativo') throw new Error('Durante combate, execute uma ação de combate.');
+        if (!estadoMecanico.combatentes.find(item => item.id === idJogador(participante.id))?.vida) throw new Error('Personagem incapacitado.');
         const { atributo, descricao } = interpretarTeste(acao);
         teste = resolverTeste(participante.ficha.atributos, atributo, descricao, rolar);
         tipo = 'teste';
     } else if (acao.startsWith('/')) throw new Error('Comando narrativo desconhecido.');
     proxima.pendente = { id: criarIdentificador(), turno: campanha.turno + 1, acao, tipo, ambiente_id: ambienteId, resposta: null,
-        participante_id: participante?.id || null, personagem_id: participante?.ficha.id || null, teste };
+        participante_id: participante?.id || null, personagem_id: participante?.ficha.id || null, teste, resultado };
     return validarCampanha(proxima, mundo);
 }
 
@@ -199,6 +243,8 @@ function validarRespostaCena(resposta, campanha, atual) {
     if (!resposta.encerramento.concluir && resposta.encerramento.desfecho) throw new Error('Desfecho sem encerramento.');
     if (resposta.exige_resolucao_mecanica && resposta.objetivos.some(item => item.estado !== 'pendente')) throw new Error('Objetivo depende de resolução mecânica.');
     if (pendente.teste && !pendente.teste.sucesso && resposta.objetivos.some(item => item.estado === 'concluido')) throw new Error('Um teste com falha não autoriza concluir objetivos.');
+    if (pendente.resultado && !pendente.resultado.sucesso && resposta.objetivos.some(item => item.estado === 'concluido')) throw new Error('Ação mecânica fracassada não autoriza concluir objetivos.');
+    if (resposta.encerramento.concluir && campanha.mecanica?.encontro?.estado === 'ativo') throw new Error('Combate em andamento impede encerrar a campanha.');
     return resposta;
 }
 
@@ -244,7 +290,7 @@ function aplicarCena(campanha, mundo, resposta) {
     const atual = obterMundoCampanha(mundo, proxima);
     proxima.memoria.npcs_encontrados = [...new Set([...proxima.memoria.npcs_encontrados, ...atual.personagens.filter(npc => npc.ambiente_id === proxima.ambiente_id).map(npc => npc.id)])];
     proxima.diario.push({ id: pedido.id, turno: pedido.turno, acao: pedido.acao, tipo: pedido.tipo, ambiente_id: pedido.ambiente_id,
-        participante_id: pedido.participante_id, personagem_id: pedido.personagem_id, teste: structuredClone(pedido.teste),
+        participante_id: pedido.participante_id, personagem_id: pedido.personagem_id, teste: structuredClone(pedido.teste), resultado: structuredClone(pedido.resultado),
         narracao: resposta.narracao.trim(), resumo: proxima.resumo, exige_resolucao_mecanica: resposta.exige_resolucao_mecanica });
     proxima.pendente = null;
     if (resposta.encerramento.concluir) { proxima.estado = 'concluida'; proxima.desfecho = resposta.encerramento.desfecho.trim(); }
@@ -288,14 +334,14 @@ class CondutorCampanha {
         let campanha = migrarCampanha(salva || iniciarCampanha(mundo), mundo);
         if (['/repetir', '/descartar'].includes(entrada) && campanha.pendente && participanteId !== null && participanteId !== campanha.pendente.participante_id) throw new Error('A cena pendente pertence a outro participante.');
         if (entrada === '/descartar') {
-            if (campanha.pendente?.teste) throw new Error('Teste já resolvido; a narração continua pendente.');
+            if (campanha.pendente?.teste || campanha.pendente?.resultado) throw new Error('Ação já resolvida; a narração continua pendente.');
             if (campanha.pendente) this.respostas.delete(campanha.pendente.id);
             campanha.pendente = null;
             await this.salvar(campanha);
             return { campanha, narracao: null };
         }
         if (entrada === '/repetir' && !campanha.pendente) {
-            if (campanha.diario.at(-1)?.teste) await this.aoResultado(structuredClone(campanha.diario.at(-1)));
+            if (campanha.diario.at(-1)?.teste || campanha.diario.at(-1)?.resultado) await this.aoResultado(structuredClone(campanha.diario.at(-1)));
             return { campanha, narracao: campanha.diario.at(-1)?.narracao || mundo.historia.preludio };
         }
         if (entrada !== '/repetir') {
@@ -303,7 +349,7 @@ class CondutorCampanha {
             await this.salvar(campanha);
         }
         const pedido = campanha.pendente;
-        if (pedido.teste) await this.aoResultado(structuredClone(pedido));
+        if (pedido.teste || pedido.resultado) await this.aoResultado(structuredClone(pedido));
         let resposta = pedido.resposta || this.respostas.get(pedido.id);
         if (!resposta) {
             resposta = await this.consultar(montarContextoCampanha(mundo, campanha));
