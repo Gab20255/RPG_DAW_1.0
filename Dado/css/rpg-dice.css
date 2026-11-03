@@ -1,0 +1,12 @@
+/* RPGDice — estilos do componente (prefixo rd-) */
+.rd-root {
+  display: inline-block;
+  line-height: 0;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.rd-canvas {
+  display: block;
+  cursor: pointer;
+}
