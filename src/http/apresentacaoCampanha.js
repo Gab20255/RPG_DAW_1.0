@@ -37,7 +37,7 @@ function apresentarCampanha(mundo) {
     };
     return {
         ...resumirCampanha(mundo),
-        versao: campanha.versao, mundo_hash: hashBaseCampanha(mundo),
+        versao: campanha.versao, revisao: mundo.revisaoPersistencia ?? null, mundo_hash: hashBaseCampanha(mundo),
         abertura: mundo.historia.preludio, resumo: campanha.resumo, ambiente_id: campanha.ambiente_id,
         direcao: selecionar(['conflito', 'objetivo', 'gancho'], campanha.direcao),
         direcao_definida: campanha.direcao_definida,

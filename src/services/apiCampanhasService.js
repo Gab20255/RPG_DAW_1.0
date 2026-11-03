@@ -54,9 +54,10 @@ class ApiCampanhas {
         validarIdCampanha(id);
         await this.repositorio.carregar(id);
         if (!this.sessoes.has(id)) {
+            let revisao;
             const condutor = new CondutorCampanha({
-                carregar: async () => { const mundo = await this.repositorio.carregar(id); return { mundo, campanha: mundo.campanha }; },
-                salvar: campanha => this.repositorio.salvar(id, campanha),
+                carregar: async () => { const mundo = await this.repositorio.carregar(id); revisao = mundo.revisaoPersistencia; return { mundo, campanha: mundo.campanha }; },
+                salvar: async campanha => { const mundo = await this.repositorio.salvar(id, campanha, { revisao }); revisao = mundo.revisaoPersistencia; return mundo; },
                 consultar: contexto => this.consultar(contexto), rolar: this.rolar,
             });
             this.sessoes.set(id, { condutor, fila: Promise.resolve() });
@@ -86,6 +87,10 @@ class ApiCampanhas {
     async carregar(id) { return apresentarCampanha(await this.repositorio.carregar(id)); }
 
     async criar(corpo) {
+        return apresentarCampanha(await this.repositorio.criar(await this.gerarMundo(corpo)));
+    }
+
+    async gerarMundo(corpo) {
         validarCorpo(corpo, ['titulo', 'historia', 'tom']);
         let pedido;
         try { pedido = validarPedidoBase(corpo); }
@@ -93,7 +98,7 @@ class ApiCampanhas {
         const mundo = await iniciarMundoPorBase(pedido,
             (premissa, bases) => this.obterServico().selecionarBase(premissa, bases),
             (premissa, base) => this.obterServico().adaptarBase(premissa, base));
-        return apresentarCampanha(await this.repositorio.criar(mundo));
+        return mundo;
     }
 
     async agir(id, corpo) {

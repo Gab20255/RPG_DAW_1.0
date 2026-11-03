@@ -1,14 +1,28 @@
 const express = require('express');
 const { ApiCampanhas } = require('../services/apiCampanhasService');
 const { ErroAplicacao } = require('../services/erroAplicacao');
+const { BancoDados } = require('../repositorios/bancoDados');
+const { RepositorioCampanhasSqlite } = require('../repositorios/campanhasSqliteRepositorio');
+const { Autenticacao, NOME_COOKIE, tokenDaRequisicao, validarCampos } = require('../services/autenticacaoService');
+const { Salas } = require('../services/salasService');
+const { origemPermitida, Limitador } = require('./seguranca');
 
-function criarAplicacao({ api = new ApiCampanhas() } = {}) {
+function criarAplicacao({ banco, criarServico, rolar, autenticacao, limitador = new Limitador() } = {}) {
+    const bancoAtual = banco || new BancoDados();
+    const repositorio = new RepositorioCampanhasSqlite(bancoAtual);
+    const api = new ApiCampanhas({ repositorio, criarServico, rolar });
+    const auth = autenticacao || new Autenticacao(bancoAtual);
+    const salas = new Salas({ banco: bancoAtual, autenticacao: auth, api });
     const aplicacao = express();
+    aplicacao.locals.servicos = { banco: bancoAtual, autenticacao: auth, api, salas, limitador };
+    let encerrada = false;
+    aplicacao.locals.encerrar = () => { if (!encerrada && !banco) bancoAtual.fechar(); encerrada = true; };
     aplicacao.disable('x-powered-by');
     aplicacao.set('json escape', true);
     aplicacao.use((requisicao, resposta, proximo) => {
         resposta.set('Cache-Control', 'no-store');
         resposta.set('X-Content-Type-Options', 'nosniff');
+        if (!['GET', 'HEAD', 'OPTIONS'].includes(requisicao.method) && !origemPermitida(requisicao)) return proximo(new ErroAplicacao(403, 'ORIGEM_INVALIDA', 'Origem da requisição não permitida.'));
         if (requisicao.method === 'POST' && !requisicao.is('application/json')) return proximo(new ErroAplicacao(415, 'FORMATO_INVALIDO', 'Envie o corpo como application/json.'));
         proximo();
     });
@@ -17,17 +31,64 @@ function criarAplicacao({ api = new ApiCampanhas() } = {}) {
     aplicacao.get('/', (requisicao, resposta) => resposta.json({ servico: 'RPG', estado: 'ativo' }));
     aplicacao.get('/api/saude', (requisicao, resposta) => resposta.json({ estado: 'ativo' }));
     aplicacao.get('/api/bases', (requisicao, resposta) => resposta.json({ bases: api.listarBases() }));
-    aplicacao.get('/api/campanhas', async (requisicao, resposta) => resposta.json({ campanhas: await api.listar() }));
-    aplicacao.post('/api/campanhas', async (requisicao, resposta) => {
-        const campanha = await api.criar(requisicao.body);
-        resposta.location(`/api/campanhas/${campanha.id}`).status(201).json({ campanha });
+    const limitarLogin = (requisicao, resposta, proximo) => {
+        try { limitador.consumir(`autenticacao:${requisicao.ip}`, 20, 15 * 60 * 1000); proximo(); }
+        catch (erro) { proximo(erro); }
+    };
+    const opcoesCookie = requisicao => ({ httpOnly: true, sameSite: 'lax', secure: requisicao.secure || process.env.NODE_ENV === 'production', path: '/' });
+    aplicacao.post('/api/autenticacao/cadastro', limitarLogin, async (requisicao, resposta) => resposta.status(201).json({ usuario: await auth.cadastrar(requisicao.body) }));
+    aplicacao.post('/api/autenticacao/login', limitarLogin, async (requisicao, resposta) => {
+        const sessao = await auth.entrar(requisicao.body, tokenDaRequisicao(requisicao));
+        resposta.cookie(NOME_COOKIE, sessao.token, { ...opcoesCookie(requisicao), maxAge: sessao.expira_em - auth.agora() });
+        resposta.json({ usuario: sessao.usuario, expira_em: sessao.expira_em });
     });
-    aplicacao.get('/api/campanhas/:id', async (requisicao, resposta) => resposta.json({ campanha: await api.carregar(requisicao.params.id) }));
-    aplicacao.get('/api/campanhas/:id/historico', async (requisicao, resposta) => resposta.json(await api.historico(requisicao.params.id, requisicao.query)));
-    aplicacao.post('/api/campanhas/:id/acoes', async (requisicao, resposta) => resposta.json({ campanha: await api.agir(requisicao.params.id, requisicao.body) }));
-    aplicacao.post('/api/campanhas/:id/participantes', async (requisicao, resposta) => resposta.status(201).json({ campanha: await api.vincular(requisicao.params.id, requisicao.body) }));
-    aplicacao.post('/api/campanhas/:id/repetir', async (requisicao, resposta) => resposta.json(await api.repetir(requisicao.params.id, requisicao.body)));
-    aplicacao.post('/api/campanhas/:id/descartar', async (requisicao, resposta) => resposta.json({ campanha: await api.descartar(requisicao.params.id, requisicao.body) }));
+    aplicacao.post('/api/autenticacao/logout', (requisicao, resposta) => {
+        validarCampos(requisicao.body, []);
+        auth.sair(tokenDaRequisicao(requisicao));
+        resposta.clearCookie(NOME_COOKIE, opcoesCookie(requisicao)).status(204).end();
+    });
+    aplicacao.use('/api', (requisicao, resposta, proximo) => {
+        try {
+            requisicao.sessao = auth.autenticar(tokenDaRequisicao(requisicao));
+            if (requisicao.method === 'POST') limitador.consumir(`acoes:${requisicao.sessao.usuario.id}`, 60, 60000);
+            proximo();
+        } catch (erro) { proximo(erro); }
+    });
+    aplicacao.get('/api/autenticacao/sessao', (requisicao, resposta) => resposta.json({ usuario: requisicao.sessao.usuario, expira_em: requisicao.sessao.expira_em }));
+    aplicacao.get('/api/salas', (requisicao, resposta) => resposta.json({ salas: salas.listar(requisicao.sessao) }));
+    const limitarCriacao = (requisicao, resposta, proximo) => {
+        try { limitador.consumir(`criacao:${requisicao.sessao.usuario.id}`, 5, 60000); proximo(); }
+        catch (erro) { proximo(erro); }
+    };
+    aplicacao.post('/api/salas', limitarCriacao, async (requisicao, resposta) => {
+        const criada = await salas.criar(requisicao.body, requisicao.sessao);
+        resposta.location(`/api/salas/${criada.sala.id}`).status(201).json(criada);
+    });
+    aplicacao.post('/api/salas/entrar', (requisicao, resposta) => resposta.json({ sala: salas.entrar(requisicao.body, requisicao.sessao) }));
+    aplicacao.get('/api/salas/:id', async (requisicao, resposta) => resposta.json(await salas.carregar(requisicao.params.id, requisicao.sessao)));
+    aplicacao.post('/api/salas/:id/personagem', async (requisicao, resposta) => resposta.status(201).json({ campanha: await salas.criarFicha(requisicao.params.id, requisicao.body, requisicao.sessao) }));
+    aplicacao.post('/api/salas/:id/acoes', async (requisicao, resposta) => resposta.json({ campanha: await salas.agir(requisicao.params.id, requisicao.body, requisicao.sessao) }));
+    aplicacao.post('/api/salas/:id/repetir', async (requisicao, resposta) => resposta.json(await salas.repetir(requisicao.params.id, requisicao.body, requisicao.sessao)));
+    aplicacao.post('/api/salas/:id/descartar', async (requisicao, resposta) => resposta.json({ campanha: await salas.descartar(requisicao.params.id, requisicao.body, requisicao.sessao) }));
+    aplicacao.get('/api/salas/:id/historico', async (requisicao, resposta) => resposta.json(await salas.historico(requisicao.params.id, requisicao.query, requisicao.sessao)));
+    aplicacao.post('/api/salas/:id/encerrar', async (requisicao, resposta) => resposta.json({ sala: await salas.encerrar(requisicao.params.id, requisicao.body, requisicao.sessao) }));
+
+    const idSala = requisicao => salas.salaDaCampanha(requisicao.params.id, requisicao.sessao);
+    aplicacao.get('/api/campanhas', async (requisicao, resposta) => {
+        const campanhas = await Promise.all(salas.listar(requisicao.sessao).map(sala => api.carregar(sala.campanha_id)));
+        resposta.json({ campanhas });
+    });
+    aplicacao.post('/api/campanhas', async (requisicao, resposta) => {
+        limitador.consumir(`criacao:${requisicao.sessao.usuario.id}`, 5, 60000);
+        const { campanha, sala } = await salas.criar(requisicao.body, requisicao.sessao);
+        resposta.location(`/api/campanhas/${campanha.id}`).status(201).json({ campanha, sala });
+    });
+    aplicacao.get('/api/campanhas/:id', async (requisicao, resposta) => resposta.json({ campanha: (await salas.carregar(idSala(requisicao), requisicao.sessao)).campanha }));
+    aplicacao.get('/api/campanhas/:id/historico', async (requisicao, resposta) => resposta.json(await salas.historico(idSala(requisicao), requisicao.query, requisicao.sessao)));
+    aplicacao.post('/api/campanhas/:id/acoes', async (requisicao, resposta) => resposta.json({ campanha: await salas.agir(idSala(requisicao), requisicao.body, requisicao.sessao) }));
+    aplicacao.post('/api/campanhas/:id/participantes', async (requisicao, resposta) => resposta.status(201).json({ campanha: await salas.criarFicha(idSala(requisicao), requisicao.body, requisicao.sessao, true) }));
+    aplicacao.post('/api/campanhas/:id/repetir', async (requisicao, resposta) => resposta.json(await salas.repetir(idSala(requisicao), requisicao.body, requisicao.sessao)));
+    aplicacao.post('/api/campanhas/:id/descartar', async (requisicao, resposta) => resposta.json({ campanha: await salas.descartar(idSala(requisicao), requisicao.body, requisicao.sessao) }));
     aplicacao.use((requisicao, resposta) => resposta.status(404).json({ erro: { codigo: 'ROTA_NAO_ENCONTRADA', mensagem: 'Rota não encontrada.' } }));
     aplicacao.use((erro, requisicao, resposta, proximo) => {
         if (resposta.headersSent) return proximo(erro);
