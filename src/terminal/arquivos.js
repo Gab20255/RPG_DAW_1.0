@@ -10,13 +10,13 @@ async function lerJson(arquivo, limite = 1024 * 1024) {
 
 function hashMundo(mundo) { return createHash('sha256').update(JSON.stringify(mundo)).digest('hex'); }
 
-async function listarJson(pasta, validar) {
+async function listarJson(pasta, validar, limite = 1024 * 1024) {
     let nomes;
     try { nomes = await fs.readdir(pasta); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
     const arquivos = [];
     for (const nome of nomes.filter((item) => item.endsWith('.json')).sort().reverse()) {
         const arquivo = path.join(pasta, nome);
-        try { const dados = await lerJson(arquivo); validar(dados); arquivos.push({ arquivo, dados }); } catch { /* Ignora arquivos incompletos na selecao. */ }
+        try { const dados = await lerJson(arquivo, limite); validar(dados); arquivos.push({ arquivo, dados }); } catch { /* Ignora arquivos incompletos na selecao. */ }
     }
     return arquivos;
 }

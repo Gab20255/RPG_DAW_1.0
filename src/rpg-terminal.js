@@ -10,13 +10,18 @@ const ServicoModelo = require('./services/geminiService');
 const { ampliarGeracao, validarGeracao } = require('./services/geracaoMundoService');
 const { iniciarMundoPorBase } = require('./services/basesRpgService');
 const { obterAgentes } = require('./prompts/agentesMundoPrompt');
+const { iniciarCampanha, migrarCampanha, validarCampanha, obterMundoCampanha, registrarAcaoCampanha, CondutorCampanha } = require('./services/campanhaService');
+const { obterParticipante } = require('./services/participantesCampanhaService');
+const { descreverTeste } = require('./rules/testes');
+const { montarContextoCampanha } = require('./services/contextoCampanhaService');
+const { PROMPT_CAMPANHA } = require('./prompts/campanhaPrompt');
 
 const { obterConfiguracao } = require('./services/configuracaoService');
 
 function normalizar(texto) { return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(); }
 
 class AplicacaoRpg {
-    constructor({ terminal, raiz = RAIZ, repositorio, criarServico = () => new ServicoModelo(obterConfiguracao()) }) {
+    constructor({ terminal, raiz = RAIZ, repositorio, rolar, criarServico = () => new ServicoModelo(obterConfiguracao()) }) {
         this.terminal = terminal;
         this.raiz = caminhos.resolve(raiz);
         this.pastas = Object.fromEntries(['mundos', 'geracoes', 'personagens', 'partidas', 'contextos', 'diagnosticos'].map((nome) => [nome, caminhos.join(this.raiz, 'output', nome)]));
@@ -25,6 +30,9 @@ class AplicacaoRpg {
         this.servico = null;
         this.rpg = null;
         this.preparacao = null;
+        this.condutorCampanha = null;
+        this.participanteId = null;
+        this.rolar = rolar;
     }
 
     obterServico() { return this.servico ||= this.criarServico(); }
@@ -35,10 +43,34 @@ class AplicacaoRpg {
         return this.rpg;
     }
 
+    obterFichaAtual() {
+        if (!this.preparacao) return this.exigirRpg().estado.personagem;
+        const participante = obterParticipante(this.preparacao.dados.campanha, this.participanteId);
+        if (!participante) throw new Error('Nenhuma ficha vinculada.');
+        return participante.ficha;
+    }
+
+    async vincularFicha(argumento) {
+        if (!this.preparacao) throw new Error('Nenhuma campanha narrativa aberta.');
+        const partes = argumento.match(/^(\S+)\s+(?:"([^"]+)"|(\S+))$/);
+        if (!partes) throw new Error('Participante ou arquivo inválido.');
+        const ficha = await lerJson(caminhos.resolve(this.raiz, partes[2] || partes[3]));
+        await this.condutorCampanha.vincular(partes[1], ficha);
+        this.participanteId = partes[1];
+        this.terminal.escrever(`Participante: ${partes[1]} — ${ficha.nome}`);
+    }
+
+    mostrarTeste(cena) {
+        const participante = this.preparacao.dados.campanha.participantes.find(item => item.id === cena.participante_id);
+        this.terminal.escrever(`\n${participante.ficha.nome} — ${descreverTeste(cena.teste)}`);
+    }
+
     mostrarResumo() {
         if (this.preparacao) {
             const mundo = this.preparacao.dados;
-            this.terminal.escrever(`\n${mundo.mundo.nome}\nEtapa: história inicial\nBase: ${mundo.origem?.base_nome || 'Mundo importado'}`);
+            const campanha = mundo.campanha;
+            this.terminal.escrever(`\n${mundo.mundo.nome}\nBase: ${mundo.origem?.base_nome || 'Mundo importado'}\nTurno: ${campanha.turno}\nEstado: ${campanha.estado}\nObjetivo: ${campanha.direcao.objetivo}\n${campanha.resumo}`);
+            if (campanha.pendente) this.terminal.escrever('Cena pendente.');
             return;
         }
         const rpg = this.exigirRpg();
@@ -89,6 +121,8 @@ class AplicacaoRpg {
             dados.mundo.nome = nome;
             if (dados.premissa) dados.premissa.titulo = nome;
             dados.preparacao ||= { etapa: 'historia_inicial', proxima_etapa: 'participantes', adaptacao: 'importada', motivo_local: null };
+            dados.preparacao.etapa = 'historia_inicial';
+            dados.campanha = iniciarCampanha(dados);
         }
         else {
             const historia = await perguntarTexto(this.terminal, 'História: ', 5, 2000);
@@ -110,16 +144,67 @@ class AplicacaoRpg {
 
     abrirPreparacao(selecionado) {
         validarMundo(selecionado.dados);
-        this.preparacao = selecionado;
+        const dados = structuredClone(selecionado.dados);
+        dados.campanha = dados.campanha ? migrarCampanha(dados.campanha, dados) : iniciarCampanha(dados);
+        this.preparacao = { ...selecionado, dados };
         this.rpg = null;
-        this.terminal.escrever(`\n${selecionado.dados.mundo.nome}\n\nHistória inicial\n${selecionado.dados.historia.preludio}`);
+        this.participanteId = null;
+        this.condutorCampanha = new CondutorCampanha({
+            carregar: async () => ({ mundo: this.preparacao.dados, campanha: this.preparacao.dados.campanha }),
+            salvar: campanha => this.salvarPreparacao(campanha),
+            consultar: contexto => this.obterServico().continuarCampanha(contexto),
+            rolar: this.rolar,
+            aoResultado: cena => this.mostrarTeste(cena),
+        });
+        this.terminal.escrever(`\n${dados.mundo.nome}\n\n${dados.campanha.turno ? 'Última cena' : 'História inicial'}\n${dados.campanha.diario.at(-1)?.narracao || dados.historia.preludio}`);
+        if (dados.campanha.pendente) this.terminal.escrever('Cena pendente.');
+    }
+
+    async salvarPreparacao(campanha = this.preparacao?.dados.campanha) {
+        if (!this.preparacao) throw new Error('Nenhuma campanha aberta.');
+        const dados = structuredClone(this.preparacao.dados);
+        dados.campanha = structuredClone(validarCampanha(campanha, dados));
+        dados.preparacao ||= { proxima_etapa: 'participantes', adaptacao: 'importada', motivo_local: null };
+        dados.preparacao.etapa = campanha.estado === 'concluida' ? 'campanha_concluida' : campanha.turno ? 'campanha_em_andamento' : 'historia_inicial';
+        await salvarAtomico(this.preparacao.arquivo, dados);
+        this.preparacao = { ...this.preparacao, dados };
+    }
+
+    async continuarCampanha(entrada) {
+        try {
+            const resultado = await this.condutorCampanha.executar(entrada, { participanteId: this.participanteId });
+            if (resultado.narracao) this.terminal.escrever(`\n${resultado.narracao}`);
+            else if (entrada === '/descartar') this.terminal.escrever('Cena pendente descartada.');
+            if (resultado.campanha.estado === 'concluida') this.terminal.escrever('Campanha concluída.');
+            else if (resultado.campanha.diario.at(-1)?.exige_resolucao_mecanica) this.terminal.escrever('Resolução mecânica pendente.');
+        } catch (erro) {
+            this.terminal.escrever(`Erro: ${erro.message}`);
+            if (this.preparacao?.dados.campanha.pendente) this.terminal.escrever('Cena pendente.');
+            await this.salvarDiagnostico(erro);
+        }
+    }
+
+    mostrarMemoria() {
+        const campanha = this.preparacao?.dados.campanha;
+        if (!campanha) throw new Error('Nenhuma campanha narrativa aberta.');
+        this.terminal.escrever(`\nResumo\n${campanha.resumo}`);
+        for (const [campo, titulo] of [['fatos', 'Fatos'], ['pistas', 'Pistas'], ['decisoes', 'Ações registradas'], ['acontecimentos', 'Acontecimentos']]) {
+            this.terminal.escrever(`\n${titulo}`);
+            campanha.memoria[campo].forEach(item => this.terminal.escrever(`[${item.turno}] ${item.participante_id ? `${item.participante_id}: ` : ''}${item.texto}`));
+        }
+        this.terminal.escrever('\nTestes');
+        campanha.diario.filter(cena => cena.teste).forEach(cena => this.terminal.escrever(`[${cena.turno}] ${cena.participante_id}: ${descreverTeste(cena.teste)}`));
+        if (campanha.pendente?.teste) this.terminal.escrever(`Pendente — ${campanha.pendente.participante_id}: ${descreverTeste(campanha.pendente.teste)}`);
+        const mundo = obterMundoCampanha(this.preparacao.dados, campanha);
+        this.terminal.escrever(`\nNPCs encontrados\n${campanha.memoria.npcs_encontrados.map(id => mundo.personagens.find(npc => npc.id === id).nome).join(', ')}`);
     }
 
     async listarPreparacoes() {
         return listarJson(this.pastas.mundos, mundo => {
             validarMundo(mundo);
-            if (mundo.preparacao?.etapa !== 'historia_inicial') throw new Error('Não é uma preparação.');
-        });
+            if (!['historia_inicial', 'campanha_em_andamento', 'campanha_concluida'].includes(mundo.preparacao?.etapa)) throw new Error('Não é uma preparação.');
+            if (mundo.campanha) validarCampanha(mundo.campanha, mundo);
+        }, 10 * 1024 * 1024);
     }
 
     async gerarMundo(geracao, arquivoGeracao) {
@@ -189,7 +274,7 @@ class AplicacaoRpg {
         const preparacoes = await this.listarPreparacoes();
         if (!salvos.length && !preparacoes.length) { this.terminal.escrever('Nenhum RPG salvo.'); return; }
         salvos.forEach((rpg, indice) => this.terminal.escrever(`${indice + 1}. ${rpg.nome} — versão ${rpg.edicao || 1} — ${rpg.estado.personagem.nome} — ${rpg.mundo.mundo.nome} — ${rpg.estado.eventos.length} acontecimento(s)`));
-        preparacoes.forEach((item, indice) => this.terminal.escrever(`${salvos.length + indice + 1}. ${item.dados.mundo.nome} — história inicial`));
+        preparacoes.forEach((item, indice) => this.terminal.escrever(`${salvos.length + indice + 1}. ${item.dados.mundo.nome} — turno ${item.dados.campanha?.turno || 0} — ${item.dados.campanha?.estado || 'história inicial'}`));
     }
 
     async carregarRpg(argumento = '') {
@@ -207,7 +292,7 @@ class AplicacaoRpg {
             let opcoes = [
                 ...salvos.map((rpg) => ({ rotulo: `${rpg.nome} — versão ${rpg.edicao || 1} — ${rpg.estado.personagem.nome} (${rpg.estado.personagem.classe}) — ${rpg.mundo.mundo.nome} — ${rpg.estado.eventos.length} acontecimento(s)${this.rpg?.id === rpg.id ? ' [aberto]' : ''}`, valor: { tipo: 'rpg', dados: rpg } })),
                 ...antigas.filter((item) => !identificadores.has(item.dados.id)).map((item) => ({ rotulo: `Ficha antiga: ${item.dados.nome} — ${item.dados.mundo_nome}`, valor: { tipo: 'ficha', dados: item.dados } })),
-                ...preparacoes.map(item => ({ rotulo: `${item.dados.mundo.nome} — história inicial — ${caminhos.basename(item.arquivo)}`, valor: { tipo: 'preparacao', ...item } })),
+                ...preparacoes.map(item => ({ rotulo: `${item.dados.mundo.nome} — turno ${item.dados.campanha?.turno || 0} — ${item.dados.campanha?.estado || 'história inicial'} — ${caminhos.basename(item.arquivo)}`, valor: { tipo: 'preparacao', ...item } })),
             ];
             if (caminhoInformado) opcoes = opcoes.filter((opcao) => normalizar(opcao.rotulo).includes(normalizar(caminhoInformado)) || opcao.valor.dados.id === caminhoInformado);
             if (!opcoes.length) throw new Error('RPG ou ficha não encontrado.');
@@ -295,6 +380,14 @@ class AplicacaoRpg {
     }
 
     async exportarContexto() {
+        if (this.preparacao) {
+            const mundo = this.preparacao.dados;
+            if (mundo.campanha.estado === 'concluida') throw new Error('Campanha concluída.');
+            const campanha = mundo.campanha.pendente ? mundo.campanha : registrarAcaoCampanha(mundo.campanha, mundo, '/observar', { participanteId: this.participanteId });
+            const arquivo = await salvarNovo(this.pastas.contextos, 'contexto', { instrucao_sistema: PROMPT_CAMPANHA, contexto: montarContextoCampanha(mundo, campanha) });
+            this.terminal.escrever(`Contexto: ${arquivo}`);
+            return;
+        }
         const rpg = this.exigirRpg();
         const estado = rpg.estado.eventos.length ? rpg.estado : registrarAcao(rpg.estado, rpg.mundo, '/observar');
         const limite = Number(process.env.NARRATION_MAX_TOKENS || 1600);
@@ -346,30 +439,50 @@ class AplicacaoRpg {
         else if (nome === '/listar') await this.listarSalvos();
         else if (nome === '/editar') await this.editarRpg(argumento);
         else if (nome === '/salvar') {
-            if (this.preparacao) await salvarAtomico(this.preparacao.arquivo, validarMundo(this.preparacao.dados));
+            if (this.preparacao) await this.salvarPreparacao();
             else this.rpg = await this.repositorio.salvar(this.exigirRpg());
             this.terminal.escrever('RPG salvo.');
         }
         else if (nome === '/resumo') this.mostrarResumo();
         else if (nome === '/enriquecer') await this.enriquecerRpg();
         else if (nome === '/contexto') await this.exportarContexto();
+        else if (nome === '/memoria') this.mostrarMemoria();
+        else if (nome === '/vincular') await this.vincularFicha(argumento);
+        else if (nome === '/jogador') {
+            if (!this.preparacao) throw new Error('Nenhuma campanha narrativa aberta.');
+            const participante = obterParticipante(this.preparacao.dados.campanha, argumento.trim());
+            this.participanteId = participante.id;
+            this.terminal.escrever(`Participante: ${participante.id} — ${participante.ficha.nome}`);
+        }
+        else if (nome === '/participantes') {
+            if (!this.preparacao) throw new Error('Nenhuma campanha narrativa aberta.');
+            const participantes = this.preparacao.dados.campanha.participantes;
+            if (!participantes.length) this.terminal.escrever('Nenhum participante vinculado.');
+            participantes.forEach(item => this.terminal.escrever(`${item.id} — ${item.ficha.nome} — ${item.ficha.classe}${this.participanteId === item.id ? ' [ativo]' : ''}`));
+        }
+        else if (nome === '/objetivos') {
+            const campanha = this.preparacao?.dados.campanha;
+            if (!campanha) throw new Error('Nenhuma campanha narrativa aberta.');
+            campanha.objetivos.forEach(item => this.terminal.escrever(`${item.estado} — ${item.descricao}${item.motivo ? `\n${item.motivo}` : ''}`));
+        }
         else if (nome === '/mundo') {
-            this.mostrarMundo(this.preparacao?.dados || this.exigirRpg().mundo);
+            this.mostrarMundo(this.preparacao ? obterMundoCampanha(this.preparacao.dados, this.preparacao.dados.campanha) : this.exigirRpg().mundo);
         } else if (nome === '/ficha') {
-            const personagem = this.exigirRpg().estado.personagem;
+            const personagem = this.obterFichaAtual();
             this.terminal.escrever(`\n${personagem.nome} — ${personagem.classe} — ${personagem.raca}\n${personagem.descricao_visual}\nNível ${personagem.nivel} | Vida ${personagem.vida}/${personagem.vida_max} | Energia ${personagem.energia}/${personagem.energia_max}\n${Object.entries(personagem.atributos).map(([atributo, valor]) => `${atributo}: ${valor}`).join(' | ')}\nInventário: ${personagem.inventario.map((item) => item.nome).join(', ')}`);
-        } else if (nome === '/habilidades') this.exigirRpg().estado.personagem.habilidades.forEach((habilidade) => this.terminal.escrever(`${resumoHabilidade(habilidade)}\n${habilidade.descricao}\nLimite: ${habilidade.limitacao}\nContrajogo: ${habilidade.contrajogo.join(', ')}`));
+        } else if (nome === '/habilidades') this.obterFichaAtual().habilidades.forEach((habilidade) => this.terminal.escrever(`${resumoHabilidade(habilidade)}\n${habilidade.descricao}\nLimite: ${habilidade.limitacao}\nContrajogo: ${habilidade.contrajogo.join(', ')}`));
         else if (nome === '/locais') {
-            const rpg = this.exigirRpg();
+            const rpg = this.preparacao ? { mundo: obterMundoCampanha(this.preparacao.dados, this.preparacao.dados.campanha), estado: { ambiente_id: this.preparacao.dados.campanha.ambiente_id } } : this.exigirRpg();
             const atual = rpg.mundo.ambientes.find((local) => local.id === rpg.estado.ambiente_id);
             this.terminal.escrever(`\n${atual.nome}\n${atual.descricao}`);
             atual.conexoes_ids.forEach((identificador, indice) => this.terminal.escrever(`${indice + 1}. ${rpg.mundo.ambientes.find((local) => local.id === identificador).nome}`));
             if (!atual.conexoes_ids.length) this.terminal.escrever('Nenhuma conexão conhecida.');
         } else if (nome === '/historico') {
-            const eventos = this.exigirRpg().estado.eventos.slice(-10);
+            const eventos = this.preparacao ? this.preparacao.dados.campanha.diario.slice(-10) : this.exigirRpg().estado.eventos.slice(-10);
             if (!eventos.length) this.terminal.escrever('Ainda não há acontecimentos.');
-            eventos.forEach((evento) => this.terminal.escrever(`\nAção: ${evento.acao}\n${evento.resumo}\n${evento.narracao?.narracao || 'Narração pendente.'}`));
-        } else await this.narrarAcao(entrada);
+            eventos.forEach((evento) => this.terminal.escrever(`\n${evento.participante_id ? `Participante: ${evento.participante_id}\n` : ''}Ação: ${evento.acao}\n${evento.teste ? `${descreverTeste(evento.teste)}\n` : ''}${evento.resumo}\n${typeof evento.narracao === 'string' ? evento.narracao : evento.narracao?.narracao || 'Narração pendente.'}`));
+        } else if (this.preparacao) await this.continuarCampanha(entrada);
+        else await this.narrarAcao(entrada);
         return true;
     }
 }
@@ -393,5 +506,8 @@ async function principal({ terminal = criarTerminal(), ...opcoes } = {}) {
     return aplicacao;
 }
 
-if (require.main === module) principal().catch((erro) => { console.error(erro.message); process.exitCode = 1; });
+if (require.main === module) {
+    const executar = process.argv.includes('--api') ? require('./servidor').executarServidor : principal;
+    executar().catch((erro) => { console.error(erro.message); process.exitCode = 1; });
+}
 module.exports = { AplicacaoRpg, principal, obterConfiguracao };

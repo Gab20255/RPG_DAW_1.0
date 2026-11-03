@@ -16,6 +16,8 @@ const { criarGeracao, gerarMundoComAgentes } = require('./geracaoMundoService');
 const { prepararContextoAgente } = require('./contextoAgentesService');
 const { criarPromptSelecaoBase, criarEsquemaSelecaoBase } = require('../prompts/selecaoBasePrompt');
 const { PROMPT_ADAPTACAO_BASE, criarEsquemaAdaptacaoBase } = require('../prompts/adaptacaoBasePrompt');
+const { PROMPT_CAMPANHA, ESQUEMA_CAMPANHA } = require('../prompts/campanhaPrompt');
+const { LIMITE_CONTEXTO } = require('../rules/narrativa');
 
 const SYSTEM_PROMPT = MESTRE_PROMPT;
 
@@ -30,6 +32,8 @@ class GeminiService {
         if (!Number.isInteger(this.limiteAgente) || this.limiteAgente <= 0) throw new Error('AGENT_MAX_TOKENS deve ser um inteiro positivo.');
         if (!Number.isInteger(this.limiteRevisao) || this.limiteRevisao <= 0) throw new Error('REVIEW_MAX_TOKENS deve ser um inteiro positivo.');
         this.narrationMaxTokens = config.narrationMaxTokens ?? 900;
+        this.limiteMestre = config.limiteMestre ?? 2400;
+        if (!Number.isInteger(this.limiteMestre) || this.limiteMestre < 1200 || this.limiteMestre > 4000) throw new Error('MASTER_MAX_TOKENS deve estar entre 1200 e 4000.');
         this.limiteAprofundamento = config.limiteAprofundamento ?? this.worldMaxTokens;
         if (!Number.isInteger(this.limiteAprofundamento) || this.limiteAprofundamento <= 0) throw new Error('ENRICHMENT_MAX_TOKENS deve ser um inteiro positivo.');
         if (!Number.isInteger(this.narrationMaxTokens) || this.narrationMaxTokens <= 0) throw new Error('NARRATION_MAX_TOKENS deve ser um inteiro positivo.');
@@ -115,7 +119,7 @@ class GeminiService {
     async adaptarBase(pedido, contexto) {
         const opcoes = {
             systemPrompt: PROMPT_ADAPTACAO_BASE, schema: criarEsquemaAdaptacaoBase(contexto),
-            json: true, maxTokens: 1400, temperatura: 0.7, usarHistorico: false,
+            json: true, maxTokens: 1600, temperatura: 0.7, usarHistorico: false,
             operacao: 'adaptacao_base', maximoTentativas: 1, prazoMs: 30000,
         };
         const mensagem = JSON.stringify({ premissa: pedido, base: contexto });
@@ -128,6 +132,19 @@ class GeminiService {
             erro.code = 'ADAPTACAO_INVALIDA';
             throw erro;
         }
+    }
+
+    async continuarCampanha(contexto) {
+        const mensagem = JSON.stringify(contexto);
+        if (mensagem.length > LIMITE_CONTEXTO || !contexto.pedido?.id) throw new Error('Contexto narrativo inválido.');
+        const opcoes = { systemPrompt: PROMPT_CAMPANHA, schema: ESQUEMA_CAMPANHA,
+            json: true, maxTokens: this.limiteMestre, temperatura: 0.75, usarHistorico: false,
+            operacao: 'campanha', maximoTentativas: 1, prazoMs: 60000 };
+        const texto = this.provider === 'openrouter'
+            ? await this._enviarOpenRouter(mensagem, 1, opcoes)
+            : await this._enviarGemini(mensagem, 1, opcoes);
+        try { return JSON.parse(texto.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')); }
+        catch { const erro = new Error('Resposta narrativa inválida. A cena permanece pendente.'); erro.code = 'CENA_INVALIDA'; throw erro; }
     }
 
     async gerarMundo(tema, tentativas = 1, opcoes = {}) {
@@ -317,7 +334,7 @@ class GeminiService {
                     contents: contents,
                     config: {
                         ...(opcoes.prazoMs ? { httpOptions: { timeout: opcoes.prazoMs, retryOptions: { attempts: maximoTentativas } } } : {}),
-                        ...(['selecao_base', 'adaptacao_base'].includes(opcoes.operacao) ? { responseJsonSchema: opcoes.schema,
+                        ...(['selecao_base', 'adaptacao_base', 'campanha'].includes(opcoes.operacao) ? { responseJsonSchema: opcoes.schema,
                             ...(/^gemini-2\.5-flash(?:-lite)?$/.test(this.modelName) ? { thinkingConfig: { thinkingBudget: 0 } } : {}) } : {}),
                         systemInstruction: opcoes.systemPrompt || SYSTEM_PROMPT,
                         temperature: opcoes.temperatura ?? (opcoes.json ? 0.4 : 0.9),
@@ -393,13 +410,13 @@ class GeminiService {
         const causa = vazia && tokensRaciocinio > 0
             ? ' O modelo consumiu tokens em raciocínio sem produzir texto.'
             : '';
-        const objeto = operacao === 'narracao' ? 'a narração' : operacao === 'aprofundamento' ? 'o aprofundamento' : operacao === 'agente' ? 'a etapa' : 'o mundo';
-        const preservacao = operacao === 'narracao' ? 'O resultado oficial foi preservado; nenhuma nova rolagem foi feita.' : operacao === 'aprofundamento' ? 'O mundo original foi preservado.' : operacao === 'agente' ? 'A etapa não foi concluída.' : 'Nenhum mundo foi salvo.';
+        const objeto = operacao === 'campanha' ? 'a cena' : operacao === 'narracao' ? 'a narração' : operacao === 'aprofundamento' ? 'o aprofundamento' : operacao === 'agente' ? 'a etapa' : 'o mundo';
+        const preservacao = operacao === 'campanha' ? 'A memória foi preservada; a cena permanece pendente.' : operacao === 'narracao' ? 'O resultado oficial foi preservado; nenhuma nova rolagem foi feita.' : operacao === 'aprofundamento' ? 'O mundo original foi preservado.' : operacao === 'agente' ? 'A etapa não foi concluída.' : 'Nenhum mundo foi salvo.';
         const error = new Error(cortada
             ? `A API interrompeu a geração no limite de tokens, antes de concluir ${objeto}. ${detalhe}${causa} ${preservacao}`
             : `A API retornou uma resposta vazia para ${objeto}. ${detalhe}${causa} ${preservacao}`);
         error.status = 422;
-        error.code = operacao === 'agente' ? (cortada ? 'AGENTE_TRUNCADO' : 'AGENTE_VAZIO') : operacao === 'narracao' ? (cortada ? 'NARRACAO_TRUNCADA' : 'NARRACAO_VAZIA') : operacao === 'aprofundamento' ? (cortada ? 'APROFUNDAMENTO_TRUNCADO' : 'APROFUNDAMENTO_VAZIO') : (cortada ? 'MUNDO_TRUNCADO' : 'MUNDO_VAZIO');
+        error.code = operacao === 'campanha' ? (cortada ? 'CENA_TRUNCADA' : 'CENA_VAZIA') : operacao === 'agente' ? (cortada ? 'AGENTE_TRUNCADO' : 'AGENTE_VAZIO') : operacao === 'narracao' ? (cortada ? 'NARRACAO_TRUNCADA' : 'NARRACAO_VAZIA') : operacao === 'aprofundamento' ? (cortada ? 'APROFUNDAMENTO_TRUNCADO' : 'APROFUNDAMENTO_VAZIO') : (cortada ? 'MUNDO_TRUNCADO' : 'MUNDO_VAZIO');
         // Somente conteudo gerado e metadados; nunca inclui chave ou cabecalhos da requisicao.
         error.diagnostico = {
             ...(agente ? { agente } : {}),

@@ -24,6 +24,7 @@ function obterConfiguracao(raiz = RAIZ) {
         limiteRevisao: Number(valores.REVIEW_MAX_TOKENS || valores.AGENT_MAX_TOKENS || valores.WORLD_MAX_TOKENS || 10000),
         concorrencia: Number(valores.GENERATION_CONCURRENCY || 6),
         narrationMaxTokens: Number(valores.NARRATION_MAX_TOKENS || 1600),
+        limiteMestre: Number(valores.MASTER_MAX_TOKENS || 2400),
         limiteAprofundamento: Number(valores.ENRICHMENT_MAX_TOKENS || valores.WORLD_MAX_TOKENS || 10000),
     };
 }

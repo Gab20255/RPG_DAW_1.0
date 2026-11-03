@@ -1,5 +1,6 @@
 const { randomUUID, randomInt } = require('node:crypto');
-const { validarPersonagem, ATRIBUTOS } = require('./personagemService');
+const { validarPersonagem } = require('./personagemService');
+const { interpretarTeste, resolverTeste, descreverTeste } = require('../rules/testes');
 const { REGRAS } = require('../rules/habilidades');
 const { hashMundo } = require('../terminal/arquivos');
 const { validarNarracao } = require('../prompts/mestrePrompt');
@@ -27,14 +28,10 @@ function registrarAcao(estado, mundo, entrada, rolar = () => randomInt(1, 21)) {
         tipo = 'transicao';
         resumo = `Transição confirmada pelo código: de ${local.nome} para ${destino.nome}. Nenhum outro efeito foi autorizado.`;
     } else if (entrada.startsWith('/teste ')) {
-        const partes = entrada.match(/^\/teste\s+(\S+)\s+(.+)$/);
-        if (!partes || !ATRIBUTOS.includes(partes[1])) throw new Error('Teste inválido.');
-        const dado = rolar();
-        if (!Number.isInteger(dado) || dado < 1 || dado > 20) throw new Error('Rolagem inválida.');
-        const bonus = Math.floor((estado.personagem.atributos[partes[1]] - 10) / 2);
-        teste = { atributo: partes[1], descricao: partes[2], d20: dado, bonus, total: dado + bonus, dificuldade: 12, sucesso: dado + bonus >= 12 };
+        const { atributo, descricao } = interpretarTeste(entrada);
+        teste = resolverTeste(estado.personagem.atributos, atributo, descricao, rolar);
         tipo = 'teste';
-        resumo = `Teste de ${teste.atributo}: ${teste.sucesso ? 'SUCESSO' : 'FALHA'} (D20 ${dado} + bônus ${bonus} = ${teste.total}; dificuldade 12). Narre esse resultado, sem aplicar vida, itens ou efeitos adicionais.`;
+        resumo = `${descreverTeste(teste)} Narre esse resultado, sem aplicar vida, itens ou efeitos adicionais.`;
     } else if (entrada === '/observar') {
         tipo = 'observacao'; resumo = 'Observação autorizada do cenário atual. Descreva somente informações conhecidas, sem revelar segredos.';
     } else if (entrada.startsWith('/falar ')) {

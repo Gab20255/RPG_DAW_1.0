@@ -1,4 +1,6 @@
 const { validarMundo } = require('../prompts/mundoPrompt');
+const { validarDirecao } = require('../rules/narrativa');
+const { iniciarCampanha } = require('./campanhaService');
 
 function criarContextoAdaptacao(mundo) {
     return {
@@ -20,8 +22,9 @@ function validarTexto(valor, limite) {
 }
 
 function aplicarAdaptacaoBase(mundo, resposta) {
-    validarCampos(resposta, ['historia_inicial', 'classes', 'personagens', 'ambientes']);
+    validarCampos(resposta, ['historia_inicial', 'direcao', 'classes', 'personagens', 'ambientes']);
     validarTexto(resposta.historia_inicial, 2400);
+    validarDirecao(resposta.direcao);
     const renomeacoes = new Map();
     for (const colecao of ['classes', 'personagens', 'ambientes']) {
         const lista = resposta[colecao];
@@ -65,7 +68,14 @@ function aplicarAdaptacaoBase(mundo, resposta) {
     }
     adaptado.historia.preludio = resposta.historia_inicial.trim();
     adaptado.historia.situacao_atual = resposta.historia_inicial.trim();
+    adaptado.historia.direcao = structuredClone(resposta.direcao);
+    adaptado.historia.conflito_principal = resposta.direcao.conflito;
+    adaptado.historia.objetivo_principal = resposta.direcao.objetivo;
+    adaptado.ganchos_aventura = [resposta.direcao.gancho];
+    adaptado.missoes[0].descricao = resposta.direcao.conflito;
+    adaptado.missoes[0].objetivo = resposta.direcao.objetivo;
     adaptado.preparacao = { etapa: 'historia_inicial', proxima_etapa: 'participantes', adaptacao: 'ia', motivo_local: null };
+    adaptado.campanha = iniciarCampanha(adaptado);
     return validarMundo(adaptado);
 }
 
@@ -83,6 +93,7 @@ async function prepararAbertura(mundo, consultarAdaptacao) {
     const local = structuredClone(mundo);
     local.historia.preludio = `${local.premissa.historia}\n\n${local.historia.preludio}`;
     local.preparacao = { etapa: 'historia_inicial', proxima_etapa: 'participantes', adaptacao: 'local', motivo_local: motivo };
+    local.campanha = iniciarCampanha(local);
     return validarMundo(local);
 }
 
