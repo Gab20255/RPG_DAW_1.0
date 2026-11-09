@@ -1,4 +1,5 @@
 const express = require('express');
+const caminhos = require('node:path');
 const { ApiCampanhas } = require('../services/apiCampanhasService');
 const { ErroAplicacao } = require('../services/erroAplicacao');
 const { BancoDados } = require('../repositorios/bancoDados');
@@ -29,7 +30,7 @@ function criarAplicacao({ banco, criarServico, rolar, autenticacao, limitador = 
     });
     aplicacao.use(express.json({ limit: '128kb', strict: true }));
 
-    aplicacao.get('/', (requisicao, resposta) => resposta.json({ servico: 'RPG', estado: 'ativo' }));
+    aplicacao.use(express.static(caminhos.resolve(__dirname, '../../public'), { dotfiles: 'deny' }));
     aplicacao.get('/api/saude', (requisicao, resposta) => resposta.json({ estado: 'ativo' }));
     aplicacao.get('/api/bases', (requisicao, resposta) => resposta.json({ bases: api.listarBases() }));
     aplicacao.get('/avatares/v1/:id.svg', (requisicao, resposta) => {
