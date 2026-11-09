@@ -19,6 +19,14 @@ class BancoDados {
             this.conexao.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
             this.transacao(() => {
                 this.conexao.exec(arquivos.readFileSync(caminhos.join(RAIZ, 'database/schema.sql'), 'utf8'));
+                this.conexao.exec('CREATE TABLE IF NOT EXISTS migracoes (nome TEXT PRIMARY KEY, aplicada_em TEXT DEFAULT CURRENT_TIMESTAMP)');
+                const pasta = caminhos.join(RAIZ, 'database/migrations');
+                for (const nome of arquivos.readdirSync(pasta).filter(item => /\.(sql|js)$/.test(item)).sort()) {
+                    if (this.obter('SELECT nome FROM migracoes WHERE nome = ?', nome)) continue;
+                    if (nome.endsWith('.sql')) this.conexao.exec(arquivos.readFileSync(caminhos.join(pasta, nome), 'utf8'));
+                    else require(caminhos.join(pasta, nome))(this);
+                    this.executar('INSERT INTO migracoes(nome) VALUES (?)', nome);
+                }
             });
         } catch (erro) { this.conexao.close(); throw erro; }
     }
