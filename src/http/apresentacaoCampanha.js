@@ -11,7 +11,7 @@ function apresentarCena(cena) {
 }
 
 function apresentarFicha(ficha) {
-    return selecionar(['id', 'nome', 'classe_id', 'classe', 'raca_id', 'raca', 'descricao_visual', 'nivel', 'vida', 'vida_max', 'energia', 'energia_max', 'atributos', 'habilidades', 'versao_regras'], ficha);
+    return selecionar(['id', 'nome', 'classe_id', 'classe', 'raca_id', 'raca', 'descricao_visual', 'avatar_id', 'avatar_url', 'nivel', 'vida', 'vida_max', 'energia', 'energia_max', 'atributos', 'habilidades', 'versao_regras'], ficha);
 }
 
 function resumirCampanha(mundo) {

@@ -60,6 +60,14 @@ function conectarTempoReal(servidor, { autenticacao, salas, api, limitador }) {
             return salas.carregar(sala.id, socket.data.sessao);
         });
         registrar('sala:parar', async corpo => { validarCampos(corpo, ['sala_id']); const sala = salas.acessar(corpo.sala_id, socket.data.sessao); await socket.leave(canal(sala.id)); return {}; });
+        registrar('sala:pronto', async corpo => {
+            validarCampos(corpo, ['sala_id', 'pronto']);
+            return { sala: await salas.marcarPronto(corpo.sala_id, { pronto: corpo.pronto }, socket.data.sessao) };
+        });
+        registrar('sala:iniciar', async corpo => {
+            validarCampos(corpo, ['sala_id']);
+            return { sala: await salas.iniciar(corpo.sala_id, {}, socket.data.sessao) };
+        });
         for (const [evento, metodo, campos] of [['sala:acao', 'agir', ['acao', 'turno_esperado']], ['sala:repetir', 'repetir', ['pedido_id']], ['sala:descartar', 'descartar', ['pedido_id']]]) {
             registrar(evento, async corpo => {
                 validarCampos(corpo, ['sala_id', ...campos], ['participante_id']);

@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { REGRAS, selecionarHabilidades } = require('../rules/habilidades');
+const { selecionarAvatar } = require('./avataresService');
 const ATRIBUTOS = ['forca', 'destreza', 'inteligencia', 'carisma', 'constituicao', 'sabedoria'];
 
 function calcularAtributos(classe) {
@@ -22,7 +23,7 @@ function texto(valor, campo, min, max) {
 }
 
 function criarPersonagem(pedido, mundo) {
-    const campos = ['mundo_id', 'nome', 'classe_id', 'raca_id', 'descricao_visual', 'habilidades_ids'];
+    const campos = ['mundo_id', 'nome', 'classe_id', 'raca_id', 'descricao_visual', 'habilidades_ids', 'avatar_id'];
     if (!pedido || typeof pedido !== 'object' || Array.isArray(pedido) || Object.keys(pedido).some((chave) => !campos.includes(chave))) throw new Error('Campos da ficha inválidos.');
     const classe = mundo.classes.find((item) => item.id === pedido.classe_id);
     if (!classe) throw new Error('Classe inválida.');
@@ -30,11 +31,13 @@ function criarPersonagem(pedido, mundo) {
     if (mundo.racas.length && !raca) throw new Error('Origem inválida.');
     if (!mundo.racas.length && pedido.raca_id) throw new Error('Este mundo não possui povos selecionáveis.');
     const habilidades = selecionarHabilidades(pedido.habilidades_ids, REGRAS.nivelInicial, REGRAS.habilidadesIniciais);
+    const descricaoVisual = texto(pedido.descricao_visual, 'Descrição visual', 10, 1000);
+    const avatar = selecionarAvatar({ ...pedido, descricao_visual: descricaoVisual }, mundo);
     return {
         id: randomUUID(), mundo_id: pedido.mundo_id, mundo_nome: mundo.mundo.nome,
         nome: texto(pedido.nome, 'Nome', 2, 60), classe_id: classe.id, classe: classe.nome,
         raca_id: raca?.id || null, raca: raca?.nome || 'Habitante do mundo',
-        descricao_visual: texto(pedido.descricao_visual, 'Descrição visual', 10, 1000),
+        descricao_visual: descricaoVisual, avatar_id: avatar.id, avatar_url: avatar.url,
         nivel: REGRAS.nivelInicial, vida: REGRAS.vidaInicial, vida_max: REGRAS.vidaInicial,
         energia: REGRAS.energiaInicial, energia_max: REGRAS.energiaInicial,
         atributos: calcularAtributos(classe), habilidades,
@@ -51,7 +54,8 @@ function validarPersonagem(ficha, mundo) {
     if (!ficha || typeof ficha.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(ficha.id)) throw new Error('Identificador da ficha inválido.');
     if (ficha.versao_regras !== REGRAS.versao) throw new Error('Versão de regras incompatível.');
     const original = criarPersonagem({ mundo_id: ficha.mundo_id, nome: ficha.nome, classe_id: ficha.classe_id, raca_id: ficha.raca_id,
-        descricao_visual: ficha.descricao_visual, habilidades_ids: ficha.habilidades?.map((h) => h.id) }, mundo);
+        descricao_visual: ficha.descricao_visual, habilidades_ids: ficha.habilidades?.map((h) => h.id), avatar_id: ficha.avatar_id }, mundo);
+    if (ficha.avatar_url !== undefined && ficha.avatar_url !== original.avatar_url) throw new Error('Endereço de avatar incompatível com o catálogo.');
     for (const campo of ['classe', 'raca', 'nivel', 'vida', 'vida_max', 'energia', 'energia_max', 'atributos', 'habilidades', 'inventario']) {
         if (!isDeepStrictEqual(ficha[campo], original[campo])) throw new Error(`A ficha contém ${campo} incompatível com as regras.`);
     }

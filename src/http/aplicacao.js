@@ -6,6 +6,7 @@ const { RepositorioCampanhasSqlite } = require('../repositorios/campanhasSqliteR
 const { Autenticacao, NOME_COOKIE, tokenDaRequisicao, validarCampos } = require('../services/autenticacaoService');
 const { Salas } = require('../services/salasService');
 const { origemPermitida, Limitador } = require('./seguranca');
+const { obterImagemAvatar } = require('../services/avataresService');
 
 function criarAplicacao({ banco, criarServico, rolar, autenticacao, limitador = new Limitador() } = {}) {
     const bancoAtual = banco || new BancoDados();
@@ -31,6 +32,13 @@ function criarAplicacao({ banco, criarServico, rolar, autenticacao, limitador = 
     aplicacao.get('/', (requisicao, resposta) => resposta.json({ servico: 'RPG', estado: 'ativo' }));
     aplicacao.get('/api/saude', (requisicao, resposta) => resposta.json({ estado: 'ativo' }));
     aplicacao.get('/api/bases', (requisicao, resposta) => resposta.json({ bases: api.listarBases() }));
+    aplicacao.get('/avatares/v1/:id.svg', (requisicao, resposta) => {
+        const imagem = obterImagemAvatar(requisicao.params.id);
+        if (!imagem) throw new ErroAplicacao(404, 'AVATAR_NAO_ENCONTRADO', 'Avatar não encontrado.');
+        resposta.set('Cache-Control', 'public, max-age=86400');
+        resposta.set('Content-Security-Policy', "default-src 'none'; style-src 'none'; sandbox");
+        resposta.type('image/svg+xml').send(imagem);
+    });
     const limitarLogin = (requisicao, resposta, proximo) => {
         try { limitador.consumir(`autenticacao:${requisicao.ip}`, 20, 15 * 60 * 1000); proximo(); }
         catch (erro) { proximo(erro); }
@@ -66,7 +74,11 @@ function criarAplicacao({ banco, criarServico, rolar, autenticacao, limitador = 
     });
     aplicacao.post('/api/salas/entrar', (requisicao, resposta) => resposta.json({ sala: salas.entrar(requisicao.body, requisicao.sessao) }));
     aplicacao.get('/api/salas/:id', async (requisicao, resposta) => resposta.json(await salas.carregar(requisicao.params.id, requisicao.sessao)));
+    aplicacao.get('/api/salas/:id/catalogo', async (requisicao, resposta) => resposta.json(await salas.catalogo(requisicao.params.id, requisicao.query, requisicao.sessao)));
+    aplicacao.post('/api/salas/:id/avatar/previa', async (requisicao, resposta) => resposta.json(await salas.preverAvatar(requisicao.params.id, requisicao.body, requisicao.sessao)));
     aplicacao.post('/api/salas/:id/personagem', async (requisicao, resposta) => resposta.status(201).json({ campanha: await salas.criarFicha(requisicao.params.id, requisicao.body, requisicao.sessao) }));
+    aplicacao.post('/api/salas/:id/pronto', async (requisicao, resposta) => resposta.json({ sala: await salas.marcarPronto(requisicao.params.id, requisicao.body, requisicao.sessao) }));
+    aplicacao.post('/api/salas/:id/iniciar', async (requisicao, resposta) => resposta.json({ sala: await salas.iniciar(requisicao.params.id, requisicao.body, requisicao.sessao) }));
     aplicacao.post('/api/salas/:id/acoes', async (requisicao, resposta) => resposta.json({ campanha: await salas.agir(requisicao.params.id, requisicao.body, requisicao.sessao) }));
     aplicacao.post('/api/salas/:id/repetir', async (requisicao, resposta) => resposta.json(await salas.repetir(requisicao.params.id, requisicao.body, requisicao.sessao)));
     aplicacao.post('/api/salas/:id/descartar', async (requisicao, resposta) => resposta.json({ campanha: await salas.descartar(requisicao.params.id, requisicao.body, requisicao.sessao) }));

@@ -60,7 +60,7 @@ class RepositorioCampanhasSqlite extends EmissorEventos {
             const vinculo = this.banco.obter('SELECT personagem_id FROM fichas_campanha WHERE campanha_id = ? AND participante_id = ?', campanha.id, participante.id);
             if (!vinculo) throw new Error('Participante sem proprietário no banco.');
             const estado = mecanica.combatentes.find(item => item.id === idJogador(participante.id));
-            this.banco.executar('UPDATE personagens SET vida = ?, vida_max = ?, inventario = ? WHERE id = ?', estado.vida, estado.vida_max, JSON.stringify(participante.ficha.inventario), vinculo.personagem_id);
+            this.banco.executar('UPDATE personagens SET vida = ?, vida_max = ?, inventario = ?, avatar_url = ? WHERE id = ?', estado.vida, estado.vida_max, JSON.stringify(participante.ficha.inventario), participante.ficha.avatar_url ?? null, vinculo.personagem_id);
         }
         for (const cena of campanha.diario) {
             if (this.banco.obter('SELECT cena_id FROM cenas_mensagens WHERE campanha_id = ? AND cena_id = ?', campanha.id, cena.id)) continue;
@@ -93,11 +93,17 @@ class RepositorioCampanhasSqlite extends EmissorEventos {
 
     vincular(id, campanha, usuarioId, participanteId, ficha, revisao) {
         return this.salvarEstado(id, campanha, revisao, salaId => {
+            const sala = this.banco.obter('SELECT ativa, etapa FROM salas WHERE id = ?', salaId);
+            if (!sala?.ativa) throw new ErroAplicacao(409, 'SALA_ENCERRADA', 'Sala encerrada.');
+            if (sala.etapa !== 'preparacao') throw new ErroAplicacao(409, 'PARTIDA_JA_INICIADA', 'A preparação da sala já terminou.');
+            if (!this.banco.obter('SELECT usuario_id FROM sala_membros WHERE sala_id = ? AND usuario_id = ?', salaId, usuarioId)) throw new ErroAplicacao(403, 'ACESSO_NEGADO', 'Usuário não pertence à sala.');
             const atributos = ficha.atributos;
-            const registro = this.banco.executar('INSERT INTO personagens(usuario_id, nome, classe, nivel, vida, vida_max, forca, destreza, inteligencia, carisma, constituicao, sabedoria, descricao_visual, inventario) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', usuarioId, ficha.nome, ficha.classe, ficha.nivel, ficha.vida, ficha.vida_max, atributos.forca, atributos.destreza, atributos.inteligencia, atributos.carisma, atributos.constituicao, atributos.sabedoria, ficha.descricao_visual, JSON.stringify(ficha.inventario));
+            const registro = this.banco.executar('INSERT INTO personagens(usuario_id, nome, classe, nivel, vida, vida_max, forca, destreza, inteligencia, carisma, constituicao, sabedoria, descricao_visual, avatar_url, inventario) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', usuarioId, ficha.nome, ficha.classe, ficha.nivel, ficha.vida, ficha.vida_max, atributos.forca, atributos.destreza, atributos.inteligencia, atributos.carisma, atributos.constituicao, atributos.sabedoria, ficha.descricao_visual, ficha.avatar_url, JSON.stringify(ficha.inventario));
             const personagemId = Number(registro.lastInsertRowid);
             this.banco.executar('INSERT INTO fichas_campanha(campanha_id, usuario_id, personagem_id, participante_id) VALUES (?, ?, ?, ?)', id, usuarioId, personagemId, participanteId);
             this.banco.executar('INSERT INTO sala_jogadores(sala_id, personagem_id) VALUES (?, ?)', salaId, personagemId);
+            this.banco.executar('UPDATE sala_membros SET pronto = 0 WHERE sala_id = ? AND usuario_id = ?', salaId, usuarioId);
+            this.banco.executar('UPDATE salas SET revisao_preparacao = revisao_preparacao + 1 WHERE id = ?', salaId);
         });
     }
 }
