@@ -190,7 +190,19 @@ $('#create-room').onsubmit = event => { event.preventDefault(); const body = Obj
 $('#join-room').onsubmit = event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); run(async () => { const { sala } = await api('/salas/entrar', body); await openRoom(sala.id); event.target.reset(); }); };
 $('#copy-code').onclick = () => run(async () => { try { await navigator.clipboard.writeText(state.room.codigo); notice('Código copiado. Compartilhe com seu grupo.'); } catch { notice(`Código da sala: ${state.room.codigo}`); } });
 $('#class-select').onchange = updateClass;
-$('#suggest-avatar').onclick = () => run(async () => { const { avatar } = await api(`/salas/${state.room.id}/avatar/previa`, { classe_id: $('#class-select').value, descricao_visual: $('#character-form [name="descricao_visual"]').value }); selectAvatar(avatar.id); notice(`Retrato sugerido: ${avatar.nome}.`); });
+$('#suggest-avatar').onclick = () => run(async () => {
+    const classe_id = $('#class-select').value;
+    const raca_id = $('#race-select').value;
+    const descricao_visual = $('#character-form [name="descricao_visual"]').value;
+    const { avatar, selecao } = await api(`/salas/${state.room.id}/avatar/previa`, {
+        classe_id, descricao_visual, ...(raca_id ? { raca_id } : {}),
+    });
+    if (classe_id !== $('#class-select').value || raca_id !== $('#race-select').value
+        || descricao_visual !== $('#character-form [name="descricao_visual"]').value) return;
+    selectAvatar(avatar.id);
+    $('#avatar-options input:checked')?.closest('label').scrollIntoView({ block: 'nearest' });
+    notice(`Retrato sugerido: ${avatar.nome}.${selecao === 'local' ? ' Seleção pelo catálogo local.' : ''}`);
+}, 'Buscando um retrato no catálogo…');
 $('#character-form').onsubmit = event => { event.preventDefault(); const data = new FormData(event.target), body = Object.fromEntries(data); body.habilidades_ids = data.getAll('habilidades_ids'); if (!body.raca_id) delete body.raca_id; if (body.habilidades_ids.length !== state.catalog.regras.habilidades_por_personagem) { notice(`Escolha exatamente ${state.catalog.regras.habilidades_por_personagem} habilidades.`, true); return; } run(async () => { await api(`/salas/${state.room.id}/personagem`, body); await refreshRoom(); notice('Personagem salvo. Confirme quando estiver pronto.'); }); };
 $('#ready').onclick = () => run(async () => { const me = state.room.membros.find(m => m.usuario_id === state.user.id); const { sala } = await api(`/salas/${state.room.id}/pronto`, { pronto: !me.pronto }); applyRoom(sala); renderRoom(); });
 $('#start-game').onclick = () => run(async () => { const { sala } = await api(`/salas/${state.room.id}/iniciar`, {}); applyRoom(sala); renderRoom(); });

@@ -6,6 +6,11 @@ function servicoTeste() {
     const falhas = new Set();
     return {
         async selecionarBase() { throw new Error('Teste usa base local.'); },
+        async selecionarAvatar({ descricao_visual, candidatos }) {
+            if (descricao_visual.includes('falha429')) throw Object.assign(new Error('Limite simulado'), { status: 429 });
+            if (descricao_visual.includes('id inválido')) return 'P99';
+            return candidatos.find(avatar => avatar.id === 'P08')?.id;
+        },
         async continuarCampanha(contexto) {
             const { pedido } = contexto;
             if (pedido.acao.includes('falha429') && !falhas.has(pedido.id)) {

@@ -16,7 +16,11 @@ async function personagem(page, name) {
     await form.getByLabel('Nome do personagem').fill(name); await form.getByLabel('Aparência',{exact:true}).fill('Armadura de couro, cabelos curtos e olhos castanhos.');
     await form.locator('[name="habilidades_ids"]').nth(0).check(); await form.locator('[name="habilidades_ids"]').nth(1).check();
     await form.getByRole('button',{name:'Sugerir pela aparência'}).click(); await expect(page.locator('#notice')).toContainText('Retrato sugerido');
+    await expect(form.locator('[name="avatar_id"][value="P08"]')).toBeChecked();
     await form.getByRole('button',{name:'Salvar personagem'}).click(); await expect(form).toBeHidden();
+    const portrait = page.locator('#character-saved img');
+    await expect(portrait).toHaveAttribute('src', '/avatares/P08.jpeg');
+    await expect.poll(() => portrait.evaluate(img => img.naturalWidth)).toBeGreaterThan(0);
     await page.getByRole('button',{name:'Estou pronto',exact:true}).click(); await expect(page.getByRole('button',{name:'Cancelar prontidão'})).toBeVisible();
 }
 test('jornada completa com duas sessões isoladas, recarga, reconexão e falha da IA', async ({ browser }) => {

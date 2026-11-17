@@ -30,8 +30,28 @@ test('dois usuários: lobby, ficha, prontidão, ações, reconexão e recuperaç
         assert.equal((await a.request(`${root}/pronto`, { pronto:true })).status, 409);
         for (const [client, name] of [[a,'Ana'],[b,'Bruno']]) {
             const catalog = (await client.request(`${root}/catalogo`)).data;
-            const ficha = { nome:name, classe_id:catalog.classes[0].id, ...(catalog.racas.length ? { raca_id:catalog.racas[0].id } : {}), descricao_visual:'Armadura simples e cabelos curtos.', habilidades_ids:catalog.habilidades.filter(h=>h.disponivel).slice(0,2).map(h=>h.id), avatar_id:catalog.avatares[0].id };
-            assert.equal((await client.request(`${root}/personagem`, ficha)).status, 201);
+            assert.equal(catalog.avatares.length, 60);
+            const classe_id = catalog.classes[0].id;
+            const descricao_visual = 'Orc de pele verde-acinzentada, presas inferiores e armadura de couro marrom.';
+            const previa = await client.request(`${root}/avatar/previa`, { classe_id, descricao_visual });
+            assert.equal(previa.data.selecao, 'ia');
+            assert.equal(previa.data.avatar.id, 'P08');
+            if (client === a) {
+                for (const motivo of ['falha429', 'id inválido']) {
+                    const alternativa = await client.request(`${root}/avatar/previa`, { classe_id, descricao_visual: `${descricao_visual} ${motivo}` });
+                    assert.equal(alternativa.status, 200);
+                    assert.equal(alternativa.data.selecao, 'local');
+                    assert.equal(alternativa.data.avatar.id, 'P08');
+                }
+                const imagem = await fetch(`${env.url}${previa.data.avatar.url}`);
+                assert.equal(imagem.headers.get('content-type'), 'image/jpeg');
+                await imagem.arrayBuffer();
+            }
+            const avatar_id = client === a ? previa.data.avatar.id : 'medieval_guardiao';
+            const ficha = { nome:name, classe_id, ...(catalog.racas.length ? { raca_id:catalog.racas[0].id } : {}), descricao_visual, habilidades_ids:catalog.habilidades.filter(h=>h.disponivel).slice(0,2).map(h=>h.id), avatar_id };
+            const criada = await client.request(`${root}/personagem`, ficha);
+            assert.equal(criada.status, 201);
+            assert.equal(criada.data.campanha.participantes.find(p => p.ficha.nome === name).ficha.avatar_id, avatar_id);
             assert.equal((await client.request(`${root}/pronto`, { pronto:true })).status, 200);
         }
         assert.equal((await a.request(`${root}/acoes`, { acao:'/observar', turno_esperado:0 })).status, 409);
@@ -60,6 +80,8 @@ test('dois usuários: lobby, ficha, prontidão, ações, reconexão e recuperaç
         sockets[1].disconnect(); const reconnected = evento(sockets[1],'connect'); sockets[1].connect(); await reconnected;
         const snapshot = await ack(sockets[1],'sala:acompanhar',{sala_id:id});
         assert.equal(snapshot.campanha.turno,3); assert.equal(snapshot.campanha.ambiente_id,destination);
+        const retratos = snapshot.campanha.participantes.map(p => p.ficha.avatar_url);
+        assert.deepEqual(retratos, ['/avatares/P08.jpeg', '/avatares/v1/medieval_guardiao.svg']);
         assert.equal((await b.request(`${root}/historico`)).data.total,3);
         assert.equal((await b.request('/api/autenticacao/sessao')).status,200);
         const revoked = evento(sockets[1],'sessao:encerrada'); await b.request('/api/autenticacao/logout',{}); await revoked;
