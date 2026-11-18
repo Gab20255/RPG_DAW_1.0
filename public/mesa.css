@@ -305,6 +305,7 @@ main:has(.room-playing:not([hidden])) {
 }
 .dice-stage .rd-canvas { max-width: 100%; height: auto !important; cursor: default; }
 .dice-status { margin: 10px 0 0; color: var(--table-muted); font-size: 12px; }
+.dice-result { margin: 4px 0 0; color: var(--table-ink); font-size: 13px; font-variant-numeric: tabular-nums; }
 
 .journal-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid #53412c; }
 .journal-heading h2 { margin: 0; font-size: 28px; }

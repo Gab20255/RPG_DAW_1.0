@@ -3,9 +3,17 @@ const $ = selector => document.querySelector(selector);
 const state = { user: null, room: null, campaign: null, catalog: null, socket: null, synced: false, busy: false, scenes: new Map(), historyStart: 0, screen: 'auth', generation: 0 };
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 const safeImage = url => typeof url === 'string' && /^\/avatares\/[a-zA-Z0-9_/.\-]+$/.test(url) ? url : '';
-let dadoDaMesa;
+let bandejaD20;
+let geracaoBandeja;
 function notice(message = '', error = false) { $('#notice').textContent = message; $('#notice').hidden = !message; $('#notice').classList.toggle('error', error); }
-function show(screen) { state.screen = screen; for (const id of ['auth', 'dashboard', 'room']) $(`#${id}`).hidden = id !== screen; }
+function show(screen) {
+    if (screen !== 'room') {
+        bandejaD20?.encerrar();
+        bandejaD20 = undefined;
+    }
+    state.screen = screen;
+    for (const id of ['auth', 'dashboard', 'room']) document.getElementById(id).hidden = id !== screen;
+}
 function localKey() { return `rpg:sala:${state.user.id}`; }
 function rememberedRoom(value) { try { if (value === undefined) return localStorage.getItem(localKey()); if (value === null) localStorage.removeItem(localKey()); else localStorage.setItem(localKey(), value); } catch { /* Armazenamento opcional em navegadores privados. */ } }
 function expireSession() {
@@ -58,7 +66,7 @@ function connect() {
     socket.on('connect_error', error => { $('#connection').textContent = '○ Sem conexão'; if (['SESSAO_INVALIDA', 'SESSAO_EXPIRADA', 'NAO_AUTENTICADO'].includes(error.data?.codigo)) expireSession(); else api('/autenticacao/sessao').catch(e => notice(e.message, true)); lockControls(); });
     socket.on('sessao:encerrada', () => { expireSession(); notice('Sua sessão terminou. Entre novamente.', true); });
     socket.on('sala:atualizada', ({ sala }) => { if (sala.id !== state.room?.id) return; applyRoom(sala); renderRoom(); });
-    socket.on('campanha:atualizada', ({ sala_id, campanha }) => { if (sala_id !== state.room?.id) return; applyCampaign(campanha); renderRoom(); loadHistory().catch(error => notice(error.message, true)); });
+    socket.on('campanha:atualizada', ({ sala_id, campanha }) => { if (sala_id !== state.room?.id) return; applyCampaign(campanha); renderRoom({ animarDado: state.synced }); loadHistory().catch(error => notice(error.message, true)); });
     socket.connect();
 }
 function ack(event, body) { return new Promise((resolve, reject) => state.socket.timeout(15000).emit(event, body, (error, data) => error ? reject(new Error('A sala não respondeu. Tente atualizar a conexão.')) : data.ok ? resolve(data) : reject(new Error(data.erro?.mensagem || 'Falha na sincronização.')))); }
@@ -245,20 +253,16 @@ function renderSceneArt(scene) {
     };
     imagem.src = url;
 }
-function prepararDadoDaMesa() {
-    if (dadoDaMesa !== undefined) return;
-    const suporte = $('#dice-stage');
-    try {
-        dadoDaMesa = new window.RPGDice.Dice(suporte, {
-            die: 'd20', theme: 'medieval', size: 36, duration: 1150, clickToRoll: false,
-        });
-    } catch {
-        dadoDaMesa = null;
-        suporte.hidden = true;
-        $('#dice-status').textContent = 'Dado 3D indisponível. Consulte os resultados no diário.';
+function sincronizarDadoDaMesa(campanha, animar) {
+    const novaMesa = !bandejaD20 || geracaoBandeja !== state.generation;
+    if (novaMesa) {
+        bandejaD20?.encerrar();
+        bandejaD20 = new BandejaD20($('#table-dice'));
+        geracaoBandeja = state.generation;
     }
+    bandejaD20.sincronizar(campanha.ultima_rolagem, animar && !novaMesa);
 }
-function renderRoom() {
+function renderRoom({ animarDado = false } = {}) {
     const sala = state.room, campanha = state.campaign; if (!sala || !campanha) return;
     $('#room-title').textContent = sala.nome; $('#room-theme').textContent = campanha.mundo.tom; $('#copy-code').textContent = sala.codigo;
     $('#room-stage').textContent = !sala.ativa ? 'Sala encerrada' : sala.etapa === 'preparacao' ? 'Preparação' : 'Em aventura';
@@ -268,7 +272,7 @@ function renderRoom() {
     const members = sala.membros.map(m => { const character = campanha.participantes.find(p => p.id === m.participante_id)?.ficha; return `<div class="member">${character ? `<img src="${escapeHtml(safeImage(character.avatar_url))}" alt="">` : '<span class="brand-mark">◇</span>'}<div class="member-info"><strong>${escapeHtml(character?.nome || m.username)}</strong><small>${escapeHtml(m.username)}${m.usuario_id === sala.host_id ? ' · anfitrião' : ''}</small></div><span class="badge">${m.pronto ? 'Pronto' : character ? 'Preparando' : 'Sem ficha'}</span></div>`; }).join('');
     $('#lobby-members').innerHTML = members;
     if (!lobby) {
-        prepararDadoDaMesa();
+        sincronizarDadoDaMesa(campanha, animarDado);
         renderParty(sala, campanha);
     }
     $('#character-form').hidden = !!ficha; $('#character-saved').hidden = !ficha;
@@ -370,7 +374,7 @@ async function sendAction(action) {
     const id = state.room.id, generation = state.generation;
     const { campanha } = await api(`/salas/${id}/acoes`, { acao: action, turno_esperado: state.campaign.turno });
     if (generation !== state.generation) return;
-    applyCampaign(campanha); $('#action-form').reset(); renderRoom(); await loadHistory();
+    applyCampaign(campanha); $('#action-form').reset(); renderRoom({ animarDado: state.synced }); await loadHistory();
 }
 $('#tab-login').onclick = () => { $('#login-form').hidden = false; $('#register-form').hidden = true; $('#tab-login').classList.add('active'); $('#tab-register').classList.remove('active'); notice(); };
 $('#tab-register').onclick = () => { $('#login-form').hidden = true; $('#register-form').hidden = false; $('#tab-login').classList.remove('active'); $('#tab-register').classList.add('active'); notice(); };

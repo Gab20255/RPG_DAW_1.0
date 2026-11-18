@@ -13,6 +13,7 @@
   <script src="/dado/js/geometry.js" defer></script>
   <script src="/dado/js/themes.js" defer></script>
   <script src="/dado/js/rpg-dice.js" defer></script>
+  <script src="/dado-mesa.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -119,7 +120,10 @@
               <section id="table-dice" class="table-dice" aria-labelledby="dice-title" tabindex="-1">
                 <div class="dice-heading"><h2 id="dice-title">Bandeja de dados</h2><span>D20</span></div>
                 <div id="dice-stage" class="dice-stage"></div>
-                <p id="dice-status" class="dice-status" role="status">Aguardando uma rolagem da partida.</p>
+                <div class="dice-readout" role="status" aria-atomic="true">
+                  <p id="dice-status" class="dice-status">Aguardando uma rolagem da partida.</p>
+                  <p id="dice-result" class="dice-result" hidden></p>
+                </div>
               </section>
               <section id="table-sheet" class="table-sheet" aria-labelledby="sheet-title" tabindex="-1">
                 <h2 id="sheet-title">Sua ficha</h2>
