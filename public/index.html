@@ -90,8 +90,12 @@
                 </div>
               </section>
               <section class="table-journal" aria-labelledby="journal-title">
-                <div class="journal-heading"><h2 id="journal-title">Diário da aventura</h2><button id="older-history" class="quiet" hidden>Carregar cenas anteriores</button></div>
-                <div id="history" role="log" aria-live="polite" aria-relevant="additions"></div>
+                <div class="journal-heading">
+                  <h2 id="journal-title">Diário da aventura</h2>
+                  <button id="older-history" class="quiet" type="button" hidden>Carregar cenas anteriores</button>
+                </div>
+                <div id="history" role="log" aria-labelledby="journal-title" aria-live="polite" aria-relevant="additions" tabindex="0"></div>
+                <button id="latest-history" class="quiet" type="button" hidden>Ir para a última cena ↓</button>
                 <div id="pending" class="pending" hidden>
                   <p id="pending-text"></p>
                   <div class="actions"><button id="retry">Tentar novamente</button><button id="discard" class="quiet">Descartar ação</button></div>
@@ -109,6 +113,10 @@
               <section class="table-sheet" aria-labelledby="sheet-title">
                 <h2 id="sheet-title">Sua ficha</h2>
                 <div id="my-character"></div>
+              </section>
+              <section class="table-inventory" aria-labelledby="inventory-title">
+                <h2 id="inventory-title">Inventário</h2>
+                <div id="my-inventory"></div>
               </section>
               <section class="table-objectives" aria-labelledby="objectives-title">
                 <h2 id="objectives-title">Objetivos</h2>

@@ -165,8 +165,41 @@ function selectAvatar(id) {
 }
 function attributes(values) { return Object.entries(values || {}).map(([name, value]) => `<span class="attribute">${escapeHtml(name)} <strong>${escapeHtml(value)}</strong></span>`).join(''); }
 function updateClass() { const current = state.catalog.classes.find(c => c.id === $('#class-select').value); $('#class-description').textContent = current.descricao; $('#class-attributes').innerHTML = attributes(current.atributos); selectAvatar(current.avatar_sugerido_id); }
-function characterCard(ficha) {
-    return `<div class="character-header"><img class="portrait" src="${escapeHtml(safeImage(ficha.avatar_url))}" alt="Retrato de ${escapeHtml(ficha.nome)}"><div><h3>${escapeHtml(ficha.nome)}</h3><small>${escapeHtml(ficha.classe)} · ${escapeHtml(ficha.raca)}</small></div></div><div class="meter"><label>Vida <span>${ficha.vida} / ${ficha.vida_max}</span></label><progress aria-label="Vida" max="${ficha.vida_max}" value="${ficha.vida}"></progress></div><div class="meter energy"><label>Energia <span>${ficha.energia} / ${ficha.energia_max}</span></label><progress aria-label="Energia" max="${ficha.energia_max}" value="${ficha.energia}"></progress></div><div class="attributes">${attributes(ficha.atributos)}</div><h3>Habilidades</h3><ul class="inventory">${ficha.habilidades.map(h => `<li>${escapeHtml(h.nome)}<small> · ${escapeHtml(h.custoRecurso)} energia</small></li>`).join('')}</ul><h3>Inventário</h3><ul class="inventory">${ficha.inventario.map(i => `<li><strong>${escapeHtml(i.nome)}</strong><small> — ${escapeHtml(i.descricao)}</small></li>`).join('') || '<li>Nenhum item.</li>'}</ul>`;
+function characterCard(ficha, inventarioEmSeparado = false) {
+    const itens = ficha.inventario.map(item => `<li><strong>${escapeHtml(item.nome)}</strong><small> — ${escapeHtml(item.descricao)}</small></li>`);
+    const habilidades = ficha.habilidades.map(habilidade => `<li>${escapeHtml(habilidade.nome)}<small> · ${escapeHtml(habilidade.custoRecurso)} energia</small></li>`);
+    return `<div class="character-header">
+        <img class="portrait" src="${escapeHtml(safeImage(ficha.avatar_url))}" alt="Retrato de ${escapeHtml(ficha.nome)}">
+        <div><h3>${escapeHtml(ficha.nome)}</h3><small>${escapeHtml(ficha.classe)} · ${escapeHtml(ficha.raca)}</small></div>
+        </div>
+        <div class="meter">
+            <label>Vida <span>${ficha.vida} / ${ficha.vida_max}</span></label>
+            <progress aria-label="Vida" max="${ficha.vida_max}" value="${ficha.vida}"></progress>
+        </div>
+        <div class="meter energy">
+            <label>Energia <span>${ficha.energia} / ${ficha.energia_max}</span></label>
+            <progress aria-label="Energia" max="${ficha.energia_max}" value="${ficha.energia}"></progress>
+        </div>
+        <div class="attributes">${attributes(ficha.atributos)}</div>
+        <h3>Habilidades</h3><ul class="inventory">${habilidades.join('')}</ul>
+        ${inventarioEmSeparado ? '' : `<h3>Inventário</h3><ul class="inventory">${itens.join('') || '<li>Nenhum item.</li>'}</ul>`}`;
+}
+function renderInventory(ficha) {
+    const target = $('#my-inventory');
+    const itens = ficha?.inventario || [];
+    const key = JSON.stringify([ficha?.id, itens]);
+    if (target.dataset.key === key) return;
+    target.dataset.key = key;
+    target.innerHTML = itens.map(item => {
+        const etiquetas = [item.tipo, item.raridade].filter(Boolean).map(escapeHtml);
+        return `<details class="inventory-entry">
+            <summary><strong>${escapeHtml(item.nome)}</strong><small>${etiquetas.join(' · ')}</small></summary>
+            <div class="inventory-details">
+                <p>${escapeHtml(item.descricao)}</p>
+                ${item.efeito ? `<p><strong>Efeito</strong> ${escapeHtml(item.efeito)}</p>` : ''}
+            </div>
+        </details>`;
+    }).join('') || '<p class="muted">Nenhum item no inventário.</p>';
 }
 function renderParty(sala, campanha) {
     $('#game-members').innerHTML = sala.membros.map(membro => {
@@ -201,7 +234,11 @@ function renderRoom() {
     $('#lobby-members').innerHTML = members;
     if (!lobby) renderParty(sala, campanha);
     $('#character-form').hidden = !!ficha; $('#character-saved').hidden = !ficha;
-    if (ficha) { $('#character-saved').innerHTML = characterCard(ficha); $('#my-character').innerHTML = characterCard(ficha); } else $('#my-character').textContent = 'Você não possui uma ficha nesta sala.';
+    if (ficha) {
+        if (lobby) $('#character-saved').innerHTML = characterCard(ficha);
+        else $('#my-character').innerHTML = characterCard(ficha, true);
+    } else $('#my-character').textContent = 'Você não possui uma ficha nesta sala.';
+    if (!lobby) renderInventory(ficha);
     $('#opening').textContent = campanha.abertura;
     $('#ready').textContent = me?.pronto ? 'Cancelar prontidão' : 'Estou pronto';
     $('#ready-description').textContent = `${sala.preparacao.jogadores_prontos} de ${sala.membros.length} jogadores prontos. São necessários pelo menos ${sala.preparacao.minimo_jogadores} jogadores com ficha.`;
@@ -233,19 +270,63 @@ async function loadHistory(older = false) {
         if (older || !history.cenas.length || offset >= history.total) break;
     }
     state.historyStart = Math.min(state.historyStart, start);
-    renderHistory();
+    renderHistory({ preservePosition: older });
 }
-function renderHistory() {
-    const target = $('#history'), nearBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
-    const scenes = [...state.scenes.values()].sort((a,b) => a.turno - b.turno);
-    const key = `${state.campaign?.id}:${scenes.map(s => s.id).join(',')}`;
-    if (target.dataset.key === key) return; target.dataset.key = key;
-    target.innerHTML = `<article class="scene-entry"><small>MESTRE · ABERTURA</small><p>${escapeHtml(state.campaign?.abertura)}</p></article>` + scenes.map(scene => {
-        const name = state.campaign.participantes.find(p => p.id === scene.participante_id)?.ficha.nome || 'Grupo';
-        return `<article class="scene-entry"><small>TURNO ${scene.turno} · ${escapeHtml(name)}</small><p class="action">${escapeHtml(scene.acao)}</p>${scene.teste ? `<p class="result">D20: ${scene.teste.d20} + ${scene.teste.bonus} = ${scene.teste.total} · ${scene.teste.sucesso ? 'Sucesso' : 'Falha'}</p>` : ''}${scene.resultado ? `<p class="result">${escapeHtml(scene.resultado.resumo)}</p>` : ''}<p>${escapeHtml(scene.narracao)}</p>${scene.exige_resolucao_mecanica ? '<small>Esta intenção ainda exige resolução pelas regras do jogo.</small>' : ''}</article>`;
-    }).join('');
+function historyNearBottom() {
+    const history = $('#history');
+    return history.scrollHeight - history.scrollTop - history.clientHeight < 48;
+}
+function updateHistoryNavigation() {
+    $('#latest-history').hidden = historyNearBottom();
     $('#older-history').hidden = state.historyStart === 0;
-    if (nearBottom) target.scrollTop = target.scrollHeight;
+}
+function sceneEntry(scene) {
+    const { mundo, participantes } = state.campaign;
+    const author = participantes.find(item => item.id === scene.participante_id)?.ficha.nome || 'Grupo';
+    const place = mundo.ambientes.find(item => item.id === scene.ambiente_id)?.nome;
+    const action = scene.tipo === 'transicao' && place ? `Ir para ${place}`
+        : scene.acao === '/observar' ? 'Observar o local' : scene.acao;
+    const test = scene.teste;
+    const entry = document.createElement('article');
+    entry.className = 'scene-entry';
+    entry.dataset.sceneId = scene.id;
+    entry.innerHTML = `<header class="scene-entry-heading">
+        <span>Turno ${scene.turno} · ${escapeHtml(author)}</span>
+        ${place ? `<span>${escapeHtml(place)}</span>` : ''}
+        </header>
+        <p class="action">${escapeHtml(action)}</p>
+        ${test ? `<p class="result ${test.sucesso ? 'result--success' : 'result--failure'}">
+            <strong>${test.sucesso ? 'Sucesso' : 'Falha'}</strong> · D20 ${test.d20} ${test.bonus < 0 ? '−' : '+'} ${Math.abs(test.bonus)} = ${test.total}</p>` : ''}
+        ${scene.resultado ? `<p class="result">${escapeHtml(scene.resultado.resumo)}</p>` : ''}
+        <p class="scene-narration">${escapeHtml(scene.narracao)}</p>
+        ${scene.exige_resolucao_mecanica ? '<small>Esta intenção ainda exige resolução pelas regras do jogo.</small>' : ''}`;
+    return entry;
+}
+function renderHistory({ preservePosition = false } = {}) {
+    const target = $('#history');
+    const key = `${state.generation}:${state.campaign.id}`;
+    const reset = target.dataset.key !== key;
+    const followLatest = reset || (!preservePosition && historyNearBottom());
+    if (reset) {
+        target.dataset.key = key;
+        target.innerHTML = `<article class="scene-entry scene-opening">
+            <header class="scene-entry-heading">Mestre · Abertura</header>
+            <p class="scene-narration">${escapeHtml(state.campaign.abertura)}</p>
+        </article>`;
+    }
+
+    const top = target.getBoundingClientRect().top;
+    const anchor = followLatest ? null : [...target.children].find(entry => entry.getBoundingClientRect().bottom > top);
+    const anchorPosition = anchor?.getBoundingClientRect().top;
+    const scenes = [...state.scenes.values()].sort((a, b) => a.turno - b.turno);
+    let cursor = target.firstElementChild.nextElementSibling;
+    for (const scene of scenes) {
+        if (cursor?.dataset.sceneId === scene.id) cursor = cursor.nextElementSibling;
+        else target.insertBefore(sceneEntry(scene), cursor);
+    }
+    if (followLatest) target.scrollTop = target.scrollHeight;
+    else if (anchor) target.scrollTop += anchor.getBoundingClientRect().top - anchorPosition;
+    updateHistoryNavigation();
 }
 async function sendAction(action) {
     const id = state.room.id, generation = state.generation;
@@ -302,4 +383,11 @@ $('#action-form').onsubmit = event => { event.preventDefault(); run(() => sendAc
 $('#observe').onclick = () => run(() => sendAction('/observar'), 'Observando o ambiente…');
 for (const [selector, route] of [['#retry','repetir'], ['#discard','descartar']]) $(selector).onclick = () => run(async () => { const pending = state.campaign.pendente; const { campanha } = await api(`/salas/${state.room.id}/${route}`, { pedido_id: pending.id }); if ($('#action-input').value.trim() === pending.acao) $('#action-form').reset(); applyCampaign(campanha); renderRoom(); await loadHistory(); }, route === 'repetir' ? 'Retomando a cena pendente…' : 'Descartando a ação…');
 $('#older-history').onclick = () => run(() => loadHistory(true));
+$('#history').onscroll = updateHistoryNavigation;
+$('#latest-history').onclick = () => {
+    const history = $('#history');
+    history.scrollTop = history.scrollHeight;
+    history.focus({ preventScroll: true });
+    updateHistoryNavigation();
+};
 run(async () => { try { const { usuario } = await api('/autenticacao/sessao'); await enterUser(usuario); } catch (error) { expireSession(); if (error.status !== 401) throw error; } });
