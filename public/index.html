@@ -76,11 +76,12 @@
         <div class="table-surface">
           <div class="table-layout">
             <div class="table-main">
-              <section class="table-map" aria-labelledby="scene-name">
+              <section id="table-map" class="table-map" aria-labelledby="scene-name" tabindex="-1">
                 <div class="map-bar"><span>Mapa da campanha</span><span id="turn" class="table-turn"></span></div>
                 <div class="map-frame">
-                  <div class="map-view">
+                  <div id="map-view" class="map-view">
                     <img id="scene-image" alt="" hidden>
+                    <span id="map-image-status" class="map-image-status" role="status" hidden></span>
                     <div class="map-caption"><span class="map-caption-label">Local atual</span><h2 id="scene-name"></h2></div>
                   </div>
                 </div>
@@ -89,7 +90,7 @@
                   <div id="destinations" class="destinations" aria-label="Destinos próximos"></div>
                 </div>
               </section>
-              <section class="table-journal" aria-labelledby="journal-title">
+              <section id="table-journal" class="table-journal" aria-labelledby="journal-title" tabindex="-1">
                 <div class="journal-heading">
                   <h2 id="journal-title">Diário da aventura</h2>
                   <button id="older-history" class="quiet" type="button" hidden>Carregar cenas anteriores</button>
@@ -101,7 +102,7 @@
                   <div class="actions"><button id="retry">Tentar novamente</button><button id="discard" class="quiet">Descartar ação</button></div>
                 </div>
                 <p id="ending" class="prose" hidden></p>
-                <form id="action-form">
+                <form id="action-form" tabindex="-1">
                   <label for="action-input">O que você faz?</label>
                   <textarea id="action-input" name="acao" required maxlength="1000" rows="3" placeholder="Descreva uma ação ou fale com alguém…"></textarea>
                   <div class="actions"><button id="observe" type="button" class="quiet">Observar</button><button class="primary" type="submit">Enviar ação →</button></div>
@@ -110,7 +111,7 @@
               </section>
             </div>
             <aside class="table-sidebar">
-              <section class="table-sheet" aria-labelledby="sheet-title">
+              <section id="table-sheet" class="table-sheet" aria-labelledby="sheet-title" tabindex="-1">
                 <h2 id="sheet-title">Sua ficha</h2>
                 <div id="my-character"></div>
               </section>
@@ -125,6 +126,12 @@
             </aside>
           </div>
         </div>
+        <nav class="table-mobile-nav" aria-label="Atalhos da mesa">
+          <a href="#table-map">Mapa</a>
+          <a href="#table-journal">Diário</a>
+          <a href="#action-form">Ações</a>
+          <a href="#table-sheet">Ficha</a>
+        </nav>
       </div>
     </section>
   </main><footer>ENTRE MUNDOS <span>Uma história construída em conjunto.</span></footer>

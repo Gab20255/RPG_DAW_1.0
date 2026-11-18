@@ -215,13 +215,34 @@ function renderParty(sala, campanha) {
     }).join('');
 }
 function renderSceneArt(scene) {
-    const imagem = $('#scene-image');
+    const mapa = $('#map-view');
+    const status = $('#map-image-status');
     const url = safeImage(scene?.imagem_url);
-    if (imagem.dataset.url === url) return;
-    imagem.dataset.url = url;
+    const chave = `${scene?.id ?? ''}:${url}`;
+    if (mapa.dataset.cenario === chave) return;
+    mapa.dataset.cenario = chave;
+
+    const imagem = new Image();
+    imagem.id = 'scene-image';
+    imagem.alt = '';
+    imagem.decoding = 'async';
     imagem.hidden = true;
-    if (url) imagem.src = url;
-    else imagem.removeAttribute('src');
+    $('#scene-image').replaceWith(imagem);
+    status.hidden = false;
+    status.textContent = url ? 'Carregando cenário…' : 'Local sem ilustração';
+    if (!url) return;
+
+    imagem.onload = () => {
+        if (!imagem.isConnected) return;
+        imagem.hidden = false;
+        status.hidden = true;
+        status.textContent = '';
+    };
+    imagem.onerror = () => {
+        if (!imagem.isConnected) return;
+        status.textContent = 'Imagem do cenário indisponível';
+    };
+    imagem.src = url;
 }
 function renderRoom() {
     const sala = state.room, campanha = state.campaign; if (!sala || !campanha) return;
@@ -344,8 +365,6 @@ $('#back').onclick = dashboard; $('#refresh-rooms').onclick = () => run(loadRoom
 $('#create-room').onsubmit = event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); run(async () => { const { sala } = await api('/salas', body); await openRoom(sala.id); event.target.reset(); }, 'Preparando o mundo da sua aventura…'); };
 $('#join-room').onsubmit = event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); run(async () => { const { sala } = await api('/salas/entrar', body); await openRoom(sala.id); event.target.reset(); }); };
 $('#copy-code').onclick = () => run(async () => { try { await navigator.clipboard.writeText(state.room.codigo); notice('Código copiado. Compartilhe com seu grupo.'); } catch { notice(`Código da sala: ${state.room.codigo}`); } });
-$('#scene-image').onload = event => { event.currentTarget.hidden = false; };
-$('#scene-image').onerror = event => { event.currentTarget.hidden = true; };
 $('#class-select').onchange = updateClass;
 $('#avatar-search').oninput = filterAvatars;
 $('#avatar-search').onkeydown = event => {
