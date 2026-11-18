@@ -35,6 +35,11 @@ function apresentarCampanha(mundo) {
         criaturas: ['id', 'nome', 'descricao', 'comportamento', 'ameaca', 'ambientes_ids'],
         missoes: ['id', 'titulo', 'tipo', 'descricao', 'objetivo', 'ambientes_ids', 'personagens_ids', 'recompensas'],
     };
+    const colecoesPublicas = Object.fromEntries(Object.entries(colecoes).map(([colecao, campos]) =>
+        [colecao, atual[colecao].map(item => selecionar(campos, item))]));
+    for (const ambiente of colecoesPublicas.ambientes) {
+        ambiente.imagem_url = mundo.imagensCenarios?.get(ambiente.id) ?? null;
+    }
     return {
         ...resumirCampanha(mundo),
         versao: campanha.versao, revisao: mundo.revisaoPersistencia ?? null, mundo_hash: hashBaseCampanha(mundo),
@@ -52,7 +57,7 @@ function apresentarCampanha(mundo) {
         preparacao: { selecao: mundo.origem?.selecao || null, adaptacao: mundo.preparacao?.adaptacao || null },
         mundo: {
             ...selecionar(['nome', 'tema', 'tom', 'descricao', 'regras_do_universo', 'ambiente_inicial_id'], atual.mundo),
-            ...Object.fromEntries(Object.entries(colecoes).map(([colecao, campos]) => [colecao, atual[colecao].map(item => selecionar(campos, item))])),
+            ...colecoesPublicas,
         },
     };
 }
