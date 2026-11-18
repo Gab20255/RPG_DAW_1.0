@@ -36,7 +36,6 @@ function selecionarCenario({ tema, ambiente }) {
 
     for (const cenario of candidatos) {
         const { nomeETipos, descricao: descricaoImagem } = indice.get(cenario.id);
-        // O tipo do local vale mais que palavras incidentais da descrição.
         const tipoPrincipal = tipo === normalizar(cenario.tipos[0]);
         const tipoCompativel = cenario.tipos.some(categoria => tipo === normalizar(categoria));
         const pontuacao = (tipoPrincipal ? 18 : tipoCompativel ? 14 : 0)
@@ -49,7 +48,6 @@ function selecionarCenario({ tema, ambiente }) {
         }
     }
 
-    // A ordem do catálogo prefere o tema principal e resolve empates de forma estável.
     return melhor;
 }
 

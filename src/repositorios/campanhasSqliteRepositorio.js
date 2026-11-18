@@ -4,6 +4,7 @@ const { validarIdCampanha } = require('./campanhasRepositorio');
 const { validarMundo } = require('../prompts/mundoPrompt');
 const { migrarCampanha, validarCampanha, obterMundoCampanha } = require('../services/campanhaService');
 const { prepararEstadoMecanico, idJogador } = require('../services/combateService');
+const { selecionarCenario } = require('../services/cenariosService');
 const { ErroAplicacao } = require('../services/erroAplicacao');
 
 class RepositorioCampanhasSqlite extends EmissorEventos {
@@ -19,13 +20,36 @@ class RepositorioCampanhasSqlite extends EmissorEventos {
     prepararRegistro(registro) {
         const mundo = validarMundo(JSON.parse(registro.mundo_json));
         mundo.campanha = migrarCampanha(mundo.campanha, mundo);
-        Object.defineProperty(mundo, 'revisaoPersistencia', { value: registro.revisao, enumerable: false });
-        return mundo;
+        return this.anexarMetadados(mundo, registro.revisao);
     }
 
     async carregar(id) { return this.prepararRegistro(this.lerRegistro(id)); }
 
     async listar() { return this.banco.listar('SELECT * FROM campanhas ORDER BY criada_em DESC').map(registro => ({ mundo: this.prepararRegistro(registro) })); }
+
+    definirImagemCenario(mundo, ambiente, mapa) {
+        if (mapa.imagem_url !== null) return mapa.imagem_url;
+        const { url } = selecionarCenario({ tema: mundo.origem?.base_id, ambiente });
+        const alterado = this.banco.obter(`UPDATE mapas_cenarios SET imagem_url = ?
+            WHERE id = ? AND imagem_url IS NULL RETURNING imagem_url`, url, mapa.mapa_id);
+        return alterado?.imagem_url ?? this.banco.obter('SELECT imagem_url FROM mapas_cenarios WHERE id = ?', mapa.mapa_id)?.imagem_url ?? null;
+    }
+
+    anexarMetadados(mundo, revisao) {
+        const campanha = mundo.campanha;
+        const mapas = this.banco.listar(`SELECT a.ambiente_id, a.mapa_id, m.imagem_url
+            FROM ambientes_mapas a JOIN mapas_cenarios m ON m.id = a.mapa_id WHERE a.campanha_id = ?`, campanha.id);
+        const mapaAtual = mapas.find(mapa => mapa.ambiente_id === campanha.ambiente_id);
+        if (mapaAtual?.imagem_url === null) {
+            const ambienteAtual = [...mundo.ambientes, ...campanha.conteudo.ambientes].find(ambiente => ambiente.id === campanha.ambiente_id);
+            mapaAtual.imagem_url = this.definirImagemCenario(mundo, ambienteAtual, mapaAtual);
+        }
+        Object.defineProperties(mundo, {
+            revisaoPersistencia: { value: revisao },
+            imagensCenarios: { value: new Map(mapas.map(mapa => [mapa.ambiente_id, mapa.imagem_url])) },
+        });
+        return mundo;
+    }
 
     criarSala(mundo, usuarioId, nome) {
         validarMundo(mundo); validarCampanha(mundo.campanha, mundo);
@@ -48,13 +72,17 @@ class RepositorioCampanhasSqlite extends EmissorEventos {
         const mecanica = prepararEstadoMecanico(campanha, atual);
         this.banco.executar('UPDATE salas SET objetivo = ? WHERE id = ?', campanha.direcao.objetivo, salaId);
         for (const [ordem, ambiente] of atual.ambientes.entries()) {
-            let vinculo = this.banco.obter('SELECT mapa_id FROM ambientes_mapas WHERE campanha_id = ? AND ambiente_id = ?', campanha.id, ambiente.id);
+            const ativo = ambiente.id === campanha.ambiente_id;
+            let vinculo = this.banco.obter(`SELECT a.mapa_id, m.imagem_url FROM ambientes_mapas a
+                JOIN mapas_cenarios m ON m.id = a.mapa_id WHERE a.campanha_id = ? AND a.ambiente_id = ?`, campanha.id, ambiente.id);
             if (!vinculo) {
-                const mapa = this.banco.executar('INSERT INTO mapas_cenarios(sala_id, nome, descricao, ordem, mapa_atual) VALUES (?, ?, ?, ?, ?)', salaId, ambiente.nome, ambiente.descricao, ordem, Number(ambiente.id === campanha.ambiente_id));
-                vinculo = { mapa_id: Number(mapa.lastInsertRowid) };
+                const mapa = this.banco.executar('INSERT INTO mapas_cenarios(sala_id, nome, descricao, ordem, mapa_atual) VALUES (?, ?, ?, ?, ?)', salaId, ambiente.nome, ambiente.descricao, ordem, Number(ativo));
+                vinculo = { mapa_id: Number(mapa.lastInsertRowid), imagem_url: null };
                 this.banco.executar('INSERT INTO ambientes_mapas(campanha_id, ambiente_id, mapa_id) VALUES (?, ?, ?)', campanha.id, ambiente.id, vinculo.mapa_id);
+            } else {
+                this.banco.executar('UPDATE mapas_cenarios SET nome = ?, descricao = ?, mapa_atual = ? WHERE id = ?', ambiente.nome, ambiente.descricao, Number(ativo), vinculo.mapa_id);
             }
-            this.banco.executar('UPDATE mapas_cenarios SET nome = ?, descricao = ?, mapa_atual = ? WHERE id = ?', ambiente.nome, ambiente.descricao, Number(ambiente.id === campanha.ambiente_id), vinculo.mapa_id);
+            if (ativo) this.definirImagemCenario(mundo, ambiente, vinculo);
         }
         for (const participante of campanha.participantes) {
             const vinculo = this.banco.obter('SELECT personagem_id FROM fichas_campanha WHERE campanha_id = ? AND participante_id = ?', campanha.id, participante.id);
@@ -84,7 +112,7 @@ class RepositorioCampanhasSqlite extends EmissorEventos {
             antesSalvar(registro.sala_id);
             this.sincronizar(mundo, registro.sala_id);
         });
-        Object.defineProperty(mundo, 'revisaoPersistencia', { value: registro.revisao + 1, enumerable: false });
+        this.anexarMetadados(mundo, registro.revisao + 1);
         this.emit('alterada', { sala_id: registro.sala_id, mundo });
         return mundo;
     }
