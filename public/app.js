@@ -168,14 +168,38 @@ function updateClass() { const current = state.catalog.classes.find(c => c.id ==
 function characterCard(ficha) {
     return `<div class="character-header"><img class="portrait" src="${escapeHtml(safeImage(ficha.avatar_url))}" alt="Retrato de ${escapeHtml(ficha.nome)}"><div><h3>${escapeHtml(ficha.nome)}</h3><small>${escapeHtml(ficha.classe)} · ${escapeHtml(ficha.raca)}</small></div></div><div class="meter"><label>Vida <span>${ficha.vida} / ${ficha.vida_max}</span></label><progress aria-label="Vida" max="${ficha.vida_max}" value="${ficha.vida}"></progress></div><div class="meter energy"><label>Energia <span>${ficha.energia} / ${ficha.energia_max}</span></label><progress aria-label="Energia" max="${ficha.energia_max}" value="${ficha.energia}"></progress></div><div class="attributes">${attributes(ficha.atributos)}</div><h3>Habilidades</h3><ul class="inventory">${ficha.habilidades.map(h => `<li>${escapeHtml(h.nome)}<small> · ${escapeHtml(h.custoRecurso)} energia</small></li>`).join('')}</ul><h3>Inventário</h3><ul class="inventory">${ficha.inventario.map(i => `<li><strong>${escapeHtml(i.nome)}</strong><small> — ${escapeHtml(i.descricao)}</small></li>`).join('') || '<li>Nenhum item.</li>'}</ul>`;
 }
+function renderParty(sala, campanha) {
+    $('#game-members').innerHTML = sala.membros.map(membro => {
+        const ficha = campanha.participantes.find(p => p.id === membro.participante_id)?.ficha;
+        const nome = ficha?.nome || membro.username;
+        const avatar = safeImage(ficha?.avatar_url);
+        const retrato = avatar ? `<img src="${escapeHtml(avatar)}" alt="">` : `<span class="party-initial" aria-hidden="true">${escapeHtml(nome[0]?.toUpperCase())}</span>`;
+        const voce = membro.usuario_id === state.user.id;
+        return `<li class="party-token${voce ? ' party-token--you' : ''}">
+            <span class="party-portrait">${retrato}</span>
+            <span class="party-info"><strong>${escapeHtml(nome)}</strong><small>${ficha ? `${ficha.vida} de ${ficha.vida_max} PV` : 'Sem ficha'}${voce ? ' · Você' : ''}</small></span>
+        </li>`;
+    }).join('');
+}
+function renderSceneArt(scene) {
+    const imagem = $('#scene-image');
+    const url = safeImage(scene?.imagem_url);
+    if (imagem.dataset.url === url) return;
+    imagem.dataset.url = url;
+    imagem.hidden = true;
+    if (url) imagem.src = url;
+    else imagem.removeAttribute('src');
+}
 function renderRoom() {
     const sala = state.room, campanha = state.campaign; if (!sala || !campanha) return;
     $('#room-title').textContent = sala.nome; $('#room-theme').textContent = campanha.mundo.tom; $('#copy-code').textContent = sala.codigo;
     $('#room-stage').textContent = !sala.ativa ? 'Sala encerrada' : sala.etapa === 'preparacao' ? 'Preparação' : 'Em aventura';
     const lobby = sala.ativa && sala.etapa === 'preparacao'; $('#lobby').hidden = !lobby; $('#game').hidden = lobby;
+    $('#room').classList.toggle('room-playing', !lobby);
     const me = sala.membros.find(m => m.usuario_id === state.user.id), ficha = campanha.participantes.find(p => p.id === me?.participante_id)?.ficha;
-    const members = sala.membros.map(m => { const character = campanha.participantes.find(p => p.id === m.participante_id)?.ficha; return `<div class="member">${character ? `<img src="${escapeHtml(safeImage(character.avatar_url))}" alt="">` : '<span class="brand-mark">◇</span>'}<div class="member-info"><strong>${escapeHtml(character?.nome || m.username)}</strong><small>${escapeHtml(m.username)}${m.usuario_id === sala.host_id ? ' · anfitrião' : ''}</small></div><span class="badge">${lobby ? m.pronto ? 'Pronto' : character ? 'Preparando' : 'Sem ficha' : character ? `${character.vida} PV` : 'Sem ficha'}</span></div>`; }).join('');
-    $('#lobby-members').innerHTML = members; $('#game-members').innerHTML = members;
+    const members = sala.membros.map(m => { const character = campanha.participantes.find(p => p.id === m.participante_id)?.ficha; return `<div class="member">${character ? `<img src="${escapeHtml(safeImage(character.avatar_url))}" alt="">` : '<span class="brand-mark">◇</span>'}<div class="member-info"><strong>${escapeHtml(character?.nome || m.username)}</strong><small>${escapeHtml(m.username)}${m.usuario_id === sala.host_id ? ' · anfitrião' : ''}</small></div><span class="badge">${m.pronto ? 'Pronto' : character ? 'Preparando' : 'Sem ficha'}</span></div>`; }).join('');
+    $('#lobby-members').innerHTML = members;
+    if (!lobby) renderParty(sala, campanha);
     $('#character-form').hidden = !!ficha; $('#character-saved').hidden = !ficha;
     if (ficha) { $('#character-saved').innerHTML = characterCard(ficha); $('#my-character').innerHTML = characterCard(ficha); } else $('#my-character').textContent = 'Você não possui uma ficha nesta sala.';
     $('#opening').textContent = campanha.abertura;
@@ -184,6 +208,7 @@ function renderRoom() {
     $('#start-game').hidden = sala.host_id !== state.user.id;
     const scene = campanha.mundo.ambientes.find(a => a.id === campanha.ambiente_id);
     $('#scene-name').textContent = scene?.nome || 'Local desconhecido'; $('#scene-description').textContent = scene?.descricao || '';
+    if (!lobby) renderSceneArt(scene);
     $('#destinations').replaceChildren();
     for (const id of scene?.conexoes_ids || []) { const place = campanha.mundo.ambientes.find(a => a.id === id); if (!place) continue; const button = document.createElement('button'); button.textContent = `Ir para ${place.nome} →`; button.onclick = () => run(() => sendAction(`/ir ${id}`), 'O grupo segue para um novo local…'); $('#destinations').append(button); }
     $('#turn').textContent = `Turno ${campanha.turno}`;
@@ -238,6 +263,8 @@ $('#back').onclick = dashboard; $('#refresh-rooms').onclick = () => run(loadRoom
 $('#create-room').onsubmit = event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); run(async () => { const { sala } = await api('/salas', body); await openRoom(sala.id); event.target.reset(); }, 'Preparando o mundo da sua aventura…'); };
 $('#join-room').onsubmit = event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); run(async () => { const { sala } = await api('/salas/entrar', body); await openRoom(sala.id); event.target.reset(); }); };
 $('#copy-code').onclick = () => run(async () => { try { await navigator.clipboard.writeText(state.room.codigo); notice('Código copiado. Compartilhe com seu grupo.'); } catch { notice(`Código da sala: ${state.room.codigo}`); } });
+$('#scene-image').onload = event => { event.currentTarget.hidden = false; };
+$('#scene-image').onerror = event => { event.currentTarget.hidden = true; };
 $('#class-select').onchange = updateClass;
 $('#avatar-search').oninput = filterAvatars;
 $('#avatar-search').onkeydown = event => {

@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#111914">
   <title>Entre Mundos · RPG cooperativo</title>
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/mesa.css">
   <script src="/socket.io/socket.io.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
@@ -25,7 +26,7 @@
       <div class="dashboard-grid"><div class="panel"><h2>Criar uma aventura</h2><form id="create-room"><label>Nome da aventura<input name="titulo" required minlength="2" maxlength="80" placeholder="As ruínas além da floresta"></label><label>Universo e história<textarea name="historia" required minlength="5" maxlength="2000" rows="4" placeholder="Descreva o mundo que vocês querem explorar…"></textarea></label><label>Tom da narrativa<input name="tom" maxlength="1000" placeholder="Mistério, exploração, fantasia…"></label><button class="primary" type="submit">Criar sala <span>→</span></button><small>A preparação do mundo pode levar alguns instantes.</small></form></div><div class="stack"><div class="panel"><h2>Seu grupo já está esperando?</h2><form id="join-room"><label>Código da sala<input name="codigo" required minlength="16" maxlength="16" pattern="[a-fA-F0-9]{16}" placeholder="Código de 16 caracteres" autocomplete="off"></label><button type="submit">Entrar com código</button></form></div><div class="panel"><h2>Continuar uma história</h2><div id="room-list" class="room-list"></div></div></div></div>
     </section>
     <section id="room" hidden>
-      <div class="section-heading"><div><button id="back" class="text-button">← Minhas aventuras</button><h1 id="room-title"></h1><p id="room-theme" class="muted"></p></div><div class="room-code"><small>CÓDIGO DO GRUPO</small><button id="copy-code" title="Copiar código"></button><span id="room-stage" class="badge"></span></div></div>
+      <div class="section-heading room-heading"><div><button id="back" class="text-button">← Minhas aventuras</button><h1 id="room-title"></h1><p id="room-theme" class="muted"></p></div><div class="room-code"><small>CÓDIGO DO GRUPO</small><button id="copy-code" title="Copiar código"></button><span id="room-stage" class="badge"></span></div></div>
       <div id="lobby" class="dashboard-grid">
         <div class="panel">
           <span class="eyebrow">ANTES DA PARTIDA</span><h2>Prepare seu personagem</h2>
@@ -67,7 +68,56 @@
           <div class="panel"><h2>O início da história</h2><p id="opening" class="prose"></p></div>
         </aside>
       </div>
-      <div id="game" class="game-grid" hidden><div class="story-column"><section class="scene panel"><span class="eyebrow">LOCAL ATUAL</span><div class="scene-art" aria-hidden="true"><span>◇</span></div><h2 id="scene-name"></h2><p id="scene-description" class="prose"></p><div id="destinations" class="destinations"></div></section><section class="panel narrative"><div class="section-heading compact"><h2>Diário da aventura</h2><span id="turn" class="badge"></span></div><button id="older-history" class="quiet" hidden>Carregar cenas anteriores</button><div id="history" role="log" aria-live="polite" aria-relevant="additions"></div><div id="pending" class="pending" hidden><p id="pending-text"></p><div class="actions"><button id="retry">Tentar novamente</button><button id="discard" class="quiet">Descartar ação</button></div></div><p id="ending" class="prose" hidden></p><form id="action-form"><label for="action-input">O que você faz?</label><textarea id="action-input" name="acao" required maxlength="1000" rows="3" placeholder="Descreva uma ação ou fale com alguém…"></textarea><div class="actions"><button id="observe" type="button" class="quiet">Observar</button><button class="primary" type="submit">Enviar ação →</button></div><small id="action-help">As ações e os resultados são compartilhados com todo o grupo.</small></form></section></div><aside class="stack"><section class="panel"><span class="eyebrow">SUA FICHA</span><div id="my-character"></div></section><section class="panel"><h2>Na aventura</h2><div id="game-members"></div></section><section class="panel"><h2>Objetivos</h2><div id="objectives"></div></section></aside></div>
+      <div id="game" class="tabletop" hidden>
+        <section class="table-party" aria-labelledby="party-title">
+          <h2 id="party-title">Grupo</h2>
+          <ul id="game-members" class="party-tokens"></ul>
+        </section>
+        <div class="table-surface">
+          <div class="table-layout">
+            <div class="table-main">
+              <section class="table-map" aria-labelledby="scene-name">
+                <div class="map-bar"><span>Mapa da campanha</span><span id="turn" class="table-turn"></span></div>
+                <div class="map-frame">
+                  <div class="map-view">
+                    <img id="scene-image" alt="" hidden>
+                    <div class="map-caption"><span class="map-caption-label">Local atual</span><h2 id="scene-name"></h2></div>
+                  </div>
+                </div>
+                <div class="map-details">
+                  <p id="scene-description" class="prose"></p>
+                  <div id="destinations" class="destinations" aria-label="Destinos próximos"></div>
+                </div>
+              </section>
+              <section class="table-journal" aria-labelledby="journal-title">
+                <div class="journal-heading"><h2 id="journal-title">Diário da aventura</h2><button id="older-history" class="quiet" hidden>Carregar cenas anteriores</button></div>
+                <div id="history" role="log" aria-live="polite" aria-relevant="additions"></div>
+                <div id="pending" class="pending" hidden>
+                  <p id="pending-text"></p>
+                  <div class="actions"><button id="retry">Tentar novamente</button><button id="discard" class="quiet">Descartar ação</button></div>
+                </div>
+                <p id="ending" class="prose" hidden></p>
+                <form id="action-form">
+                  <label for="action-input">O que você faz?</label>
+                  <textarea id="action-input" name="acao" required maxlength="1000" rows="3" placeholder="Descreva uma ação ou fale com alguém…"></textarea>
+                  <div class="actions"><button id="observe" type="button" class="quiet">Observar</button><button class="primary" type="submit">Enviar ação →</button></div>
+                  <small id="action-help" role="status"></small>
+                </form>
+              </section>
+            </div>
+            <aside class="table-sidebar">
+              <section class="table-sheet" aria-labelledby="sheet-title">
+                <h2 id="sheet-title">Sua ficha</h2>
+                <div id="my-character"></div>
+              </section>
+              <section class="table-objectives" aria-labelledby="objectives-title">
+                <h2 id="objectives-title">Objetivos</h2>
+                <div id="objectives"></div>
+              </section>
+            </aside>
+          </div>
+        </div>
+      </div>
     </section>
   </main><footer>ENTRE MUNDOS <span>Uma história construída em conjunto.</span></footer>
 </body>
