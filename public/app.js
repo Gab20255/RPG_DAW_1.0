@@ -3,6 +3,7 @@ const $ = selector => document.querySelector(selector);
 const state = { user: null, room: null, campaign: null, catalog: null, socket: null, synced: false, busy: false, scenes: new Map(), historyStart: 0, screen: 'auth', generation: 0 };
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 const safeImage = url => typeof url === 'string' && /^\/avatares\/[a-zA-Z0-9_/.\-]+$/.test(url) ? url : '';
+let dadoDaMesa;
 function notice(message = '', error = false) { $('#notice').textContent = message; $('#notice').hidden = !message; $('#notice').classList.toggle('error', error); }
 function show(screen) { state.screen = screen; for (const id of ['auth', 'dashboard', 'room']) $(`#${id}`).hidden = id !== screen; }
 function localKey() { return `rpg:sala:${state.user.id}`; }
@@ -244,6 +245,19 @@ function renderSceneArt(scene) {
     };
     imagem.src = url;
 }
+function prepararDadoDaMesa() {
+    if (dadoDaMesa !== undefined) return;
+    const suporte = $('#dice-stage');
+    try {
+        dadoDaMesa = new window.RPGDice.Dice(suporte, {
+            die: 'd20', theme: 'medieval', size: 36, duration: 1150, clickToRoll: false,
+        });
+    } catch {
+        dadoDaMesa = null;
+        suporte.hidden = true;
+        $('#dice-status').textContent = 'Dado 3D indisponível. Consulte os resultados no diário.';
+    }
+}
 function renderRoom() {
     const sala = state.room, campanha = state.campaign; if (!sala || !campanha) return;
     $('#room-title').textContent = sala.nome; $('#room-theme').textContent = campanha.mundo.tom; $('#copy-code').textContent = sala.codigo;
@@ -253,7 +267,10 @@ function renderRoom() {
     const me = sala.membros.find(m => m.usuario_id === state.user.id), ficha = campanha.participantes.find(p => p.id === me?.participante_id)?.ficha;
     const members = sala.membros.map(m => { const character = campanha.participantes.find(p => p.id === m.participante_id)?.ficha; return `<div class="member">${character ? `<img src="${escapeHtml(safeImage(character.avatar_url))}" alt="">` : '<span class="brand-mark">◇</span>'}<div class="member-info"><strong>${escapeHtml(character?.nome || m.username)}</strong><small>${escapeHtml(m.username)}${m.usuario_id === sala.host_id ? ' · anfitrião' : ''}</small></div><span class="badge">${m.pronto ? 'Pronto' : character ? 'Preparando' : 'Sem ficha'}</span></div>`; }).join('');
     $('#lobby-members').innerHTML = members;
-    if (!lobby) renderParty(sala, campanha);
+    if (!lobby) {
+        prepararDadoDaMesa();
+        renderParty(sala, campanha);
+    }
     $('#character-form').hidden = !!ficha; $('#character-saved').hidden = !ficha;
     if (ficha) {
         if (lobby) $('#character-saved').innerHTML = characterCard(ficha);

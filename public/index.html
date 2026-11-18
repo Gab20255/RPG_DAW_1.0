@@ -6,8 +6,13 @@
   <meta name="theme-color" content="#111914">
   <title>Entre Mundos · RPG cooperativo</title>
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/dado/css/rpg-dice.css">
   <link rel="stylesheet" href="/mesa.css">
   <script src="/socket.io/socket.io.js" defer></script>
+  <script src="/dado/js/math3d.js" defer></script>
+  <script src="/dado/js/geometry.js" defer></script>
+  <script src="/dado/js/themes.js" defer></script>
+  <script src="/dado/js/rpg-dice.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -111,6 +116,11 @@
               </section>
             </div>
             <aside class="table-sidebar">
+              <section id="table-dice" class="table-dice" aria-labelledby="dice-title" tabindex="-1">
+                <div class="dice-heading"><h2 id="dice-title">Bandeja de dados</h2><span>D20</span></div>
+                <div id="dice-stage" class="dice-stage"></div>
+                <p id="dice-status" class="dice-status" role="status">Aguardando uma rolagem da partida.</p>
+              </section>
               <section id="table-sheet" class="table-sheet" aria-labelledby="sheet-title" tabindex="-1">
                 <h2 id="sheet-title">Sua ficha</h2>
                 <div id="my-character"></div>
@@ -130,6 +140,7 @@
           <a href="#table-map">Mapa</a>
           <a href="#table-journal">Diário</a>
           <a href="#action-form">Ações</a>
+          <a href="#table-dice">D20</a>
           <a href="#table-sheet">Ficha</a>
         </nav>
       </div>
