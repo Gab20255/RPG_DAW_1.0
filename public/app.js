@@ -3,6 +3,15 @@ const $ = selector => document.querySelector(selector);
 const state = { user: null, room: null, campaign: null, catalog: null, socket: null, synced: false, busy: false, scenes: new Map(), historyStart: 0, screen: 'auth', generation: 0 };
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 const safeImage = url => typeof url === 'string' && /^\/avatares\/[a-zA-Z0-9_/.\-]+$/.test(url) ? url : '';
+const nomesAtributos = {
+    forca: 'Força', destreza: 'Destreza', inteligencia: 'Inteligência',
+    carisma: 'Carisma', constituicao: 'Constituição', sabedoria: 'Sabedoria',
+};
+const modosAcao = {
+    livre: { rotulo: 'O que você faz?', dica: 'Descreva uma ação ou fale com alguém…', botao: 'Enviar ação →' },
+    falar: { rotulo: 'O que você diz?', dica: 'Ex.: Pergunto à estalajadeira o que ela viu.', botao: 'Enviar fala →' },
+    teste: { rotulo: 'O que você tenta fazer?', dica: 'Ex.: Examinar os símbolos na porta.', botao: 'Fazer teste →' },
+};
 let bandejaD20;
 let geracaoBandeja;
 function notice(message = '', error = false) { $('#notice').textContent = message; $('#notice').hidden = !message; $('#notice').classList.toggle('error', error); }
@@ -46,7 +55,7 @@ function lockControls() {
     $('#ready').disabled = state.busy || !room?.ativa || !me?.personagem_id || room.etapa !== 'preparacao';
     $('#start-game').disabled = state.busy || !room?.preparacao.pronta_para_iniciar;
     const canAct = !state.busy && state.synced && !!state.socket?.connected && room?.ativa && room.etapa === 'em_andamento' && campaign?.estado !== 'concluida' && !campaign?.pendente;
-    document.querySelectorAll('#action-form button, #action-input, #destinations button').forEach(el => { el.disabled = !canAct; });
+    document.querySelectorAll('#action-form button, #action-form select, #action-input, #destinations button').forEach(el => { el.disabled = !canAct; });
     const mine = campaign?.pendente?.participante_id === `usuario_${state.user?.id}`;
     $('#retry').disabled = state.busy || !state.synced || !state.socket?.connected || !mine || !room?.ativa;
     $('#discard').disabled = $('#retry').disabled || !!campaign?.pendente?.teste || !!campaign?.pendente?.resultado;
@@ -109,7 +118,7 @@ async function openRoom(id) {
     const [data, catalog] = await Promise.all([api(`/salas/${id}`), api(`/salas/${id}/catalogo`)]);
     if (generation !== state.generation) return;
     state.room = data.sala; state.campaign = data.campanha; state.catalog = catalog; state.scenes = new Map(); state.historyStart = Math.max(0, data.campanha.turno - 20);
-    rememberedRoom(id); $('#character-form').reset(); $('#action-form').reset(); buildCharacterForm(); show('room'); renderRoom();
+    rememberedRoom(id); $('#character-form').reset(); resetarFormularioAcao(); buildCharacterForm(); show('room'); renderRoom();
     if (state.socket?.connected) await followRoom(); else await loadHistory();
 }
 function option(id, name) { return `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`; }
@@ -290,6 +299,7 @@ function renderRoom({ animarDado = false } = {}) {
     if (!lobby) renderSceneArt(scene);
     $('#destinations').replaceChildren();
     for (const id of scene?.conexoes_ids || []) { const place = campanha.mundo.ambientes.find(a => a.id === id); if (!place) continue; const button = document.createElement('button'); button.textContent = `Ir para ${place.nome} →`; button.onclick = () => run(() => sendAction(`/ir ${id}`), 'O grupo segue para um novo local…'); $('#destinations').append(button); }
+    $('#action-routes-link').hidden = !$('#destinations').childElementCount;
     $('#turn').textContent = `Turno ${campanha.turno}`;
     $('#objectives').innerHTML = campanha.objetivos.map(o => `<div class="objective">${escapeHtml(o.descricao)}<small>${escapeHtml(o.estado)}</small></div>`).join('');
     $('#pending').hidden = !campanha.pendente;
@@ -322,12 +332,21 @@ function updateHistoryNavigation() {
     $('#latest-history').hidden = historyNearBottom();
     $('#older-history').hidden = state.historyStart === 0;
 }
+function descreverAcao(scene, place) {
+    if (scene.tipo === 'transicao' && place) return 'Ir para ' + place;
+    if (scene.tipo === 'observacao') return 'Observar o local';
+    if (scene.tipo === 'dialogo') return 'Diz: ' + scene.acao.replace(/^\/falar\s+/, '');
+    if (scene.teste) {
+        const atributo = nomesAtributos[scene.teste.atributo] || scene.teste.atributo;
+        return 'Teste de ' + atributo + ': ' + scene.teste.descricao;
+    }
+    return scene.acao;
+}
 function sceneEntry(scene) {
     const { mundo, participantes } = state.campaign;
     const author = participantes.find(item => item.id === scene.participante_id)?.ficha.nome || 'Grupo';
     const place = mundo.ambientes.find(item => item.id === scene.ambiente_id)?.nome;
-    const action = scene.tipo === 'transicao' && place ? `Ir para ${place}`
-        : scene.acao === '/observar' ? 'Observar o local' : scene.acao;
+    const action = descreverAcao(scene, place);
     const test = scene.teste;
     const entry = document.createElement('article');
     entry.className = 'scene-entry';
@@ -370,11 +389,38 @@ function renderHistory({ preservePosition = false } = {}) {
     else if (anchor) target.scrollTop += anchor.getBoundingClientRect().top - anchorPosition;
     updateHistoryNavigation();
 }
-async function sendAction(action) {
+function selecionarModoAcao(modo) {
+    const { rotulo, dica, botao } = modosAcao[modo];
+    const formulario = $('#action-form');
+    formulario.dataset.mode = modo;
+    $('#action-attribute-field').hidden = modo !== 'teste';
+    $('#action-label').textContent = rotulo;
+    $('#action-input').placeholder = dica;
+    $('#action-submit').textContent = botao;
+    for (const controle of formulario.querySelectorAll('[data-action-mode]')) {
+        controle.setAttribute('aria-pressed', String(controle.dataset.actionMode === modo));
+    }
+}
+function resetarFormularioAcao() {
+    $('#action-form').reset();
+    selecionarModoAcao('livre');
+}
+function lerAcaoFormulario() {
+    const texto = $('#action-input').value.trim();
+    if (!texto) return '';
+    const modo = $('#action-form').dataset.mode;
+    if (modo === 'falar') return '/falar ' + texto;
+    if (modo === 'teste') return '/teste ' + $('#action-attribute').value + ' ' + texto;
+    return texto;
+}
+async function sendAction(action, doFormulario = false) {
     const id = state.room.id, generation = state.generation;
     const { campanha } = await api(`/salas/${id}/acoes`, { acao: action, turno_esperado: state.campaign.turno });
     if (generation !== state.generation) return;
-    applyCampaign(campanha); $('#action-form').reset(); renderRoom({ animarDado: state.synced }); await loadHistory();
+    applyCampaign(campanha);
+    if (doFormulario && lerAcaoFormulario() === action) resetarFormularioAcao();
+    renderRoom({ animarDado: state.synced });
+    await loadHistory();
 }
 $('#tab-login').onclick = () => { $('#login-form').hidden = false; $('#register-form').hidden = true; $('#tab-login').classList.add('active'); $('#tab-register').classList.remove('active'); notice(); };
 $('#tab-register').onclick = () => { $('#login-form').hidden = true; $('#register-form').hidden = false; $('#tab-login').classList.remove('active'); $('#tab-register').classList.add('active'); notice(); };
@@ -419,9 +465,28 @@ $('#suggest-avatar').onclick = () => run(async () => {
 $('#character-form').onsubmit = event => { event.preventDefault(); const data = new FormData(event.target), body = Object.fromEntries(data); body.habilidades_ids = data.getAll('habilidades_ids'); if (!body.raca_id) delete body.raca_id; if (body.habilidades_ids.length !== state.catalog.regras.habilidades_por_personagem) { notice(`Escolha exatamente ${state.catalog.regras.habilidades_por_personagem} habilidades.`, true); return; } run(async () => { await api(`/salas/${state.room.id}/personagem`, body); await refreshRoom(); notice('Personagem salvo. Confirme quando estiver pronto.'); }); };
 $('#ready').onclick = () => run(async () => { const me = state.room.membros.find(m => m.usuario_id === state.user.id); const { sala } = await api(`/salas/${state.room.id}/pronto`, { pronto: !me.pronto }); applyRoom(sala); renderRoom(); });
 $('#start-game').onclick = () => run(async () => { const { sala } = await api(`/salas/${state.room.id}/iniciar`, {}); applyRoom(sala); renderRoom(); });
-$('#action-form').onsubmit = event => { event.preventDefault(); run(() => sendAction($('#action-input').value.trim()), 'O mestre está preparando a narração…'); };
+for (const [valor, rotulo] of Object.entries(nomesAtributos)) {
+    $('#action-attribute').add(new Option(rotulo, valor, valor === 'inteligencia'));
+}
+for (const controle of document.querySelectorAll('[data-action-mode]')) {
+    controle.onclick = () => selecionarModoAcao(controle.dataset.actionMode);
+}
+$('#action-form').onsubmit = event => {
+    event.preventDefault();
+    const acao = lerAcaoFormulario();
+    if (!acao || acao.length > 1000) {
+        notice(acao ? 'A ação ficou longa demais. Encurte a descrição.' : 'Escreva o que seu personagem vai fazer.', true);
+        return;
+    }
+    run(() => sendAction(acao, true), 'O mestre está preparando a narração…');
+};
 $('#observe').onclick = () => run(() => sendAction('/observar'), 'Observando o ambiente…');
-for (const [selector, route] of [['#retry','repetir'], ['#discard','descartar']]) $(selector).onclick = () => run(async () => { const pending = state.campaign.pendente; const { campanha } = await api(`/salas/${state.room.id}/${route}`, { pedido_id: pending.id }); if ($('#action-input').value.trim() === pending.acao) $('#action-form').reset(); applyCampaign(campanha); renderRoom(); await loadHistory(); }, route === 'repetir' ? 'Retomando a cena pendente…' : 'Descartando a ação…');
+for (const [selector, route] of [['#retry','repetir'], ['#discard','descartar']]) $(selector).onclick = () => run(async () => {
+    const pending = state.campaign.pendente;
+    const { campanha } = await api(`/salas/${state.room.id}/${route}`, { pedido_id: pending.id });
+    if (lerAcaoFormulario() === pending.acao) resetarFormularioAcao();
+    applyCampaign(campanha); renderRoom(); await loadHistory();
+}, route === 'repetir' ? 'Retomando a cena pendente…' : 'Descartando a ação…');
 $('#older-history').onclick = () => run(() => loadHistory(true));
 $('#history').onscroll = updateHistoryNavigation;
 $('#latest-history').onclick = () => {

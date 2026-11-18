@@ -405,6 +405,27 @@ main:has(.room-playing:not([hidden])) {
 .table-journal small, .table-objectives small { color: var(--table-muted); }
 .table-journal #action-input { background: #17130f; border-color: #6f563c; }
 .table-journal #action-input::placeholder { color: #9d907d; }
+.table-journal #action-form { gap: 12px; }
+.action-attribute-field { display: grid; gap: 8px; }
+.table-journal #action-attribute { max-width: 260px; border-color: #6f563c; background: #17130f; }
+.action-modes, .explore-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.action-modes button { padding: 8px 10px; font-size: 12px; }
+.table-journal .action-modes [aria-pressed="true"] {
+  border-color: #c6a269;
+  background: #493720;
+  color: #ffe9bd;
+}
+.explore-actions a {
+  padding: 6px 4px;
+  color: var(--table-brass);
+  font-size: 12px;
+  text-underline-offset: 3px;
+}
 .table-journal #action-form button.primary { background: #ebc887; border-color: #ebc887; color: #21190d; }
 .table-journal #action-form button.primary:hover { background: #f6dba3; }
 

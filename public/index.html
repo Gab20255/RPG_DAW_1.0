@@ -108,10 +108,25 @@
                   <div class="actions"><button id="retry">Tentar novamente</button><button id="discard" class="quiet">Descartar ação</button></div>
                 </div>
                 <p id="ending" class="prose" hidden></p>
-                <form id="action-form" tabindex="-1">
-                  <label for="action-input">O que você faz?</label>
+                <form id="action-form" tabindex="-1" data-mode="livre">
+                  <div class="action-modes" role="group" aria-label="Tipo de ação">
+                    <button type="button" data-action-mode="livre" class="quiet" aria-pressed="true">Ação livre</button>
+                    <button type="button" data-action-mode="falar" class="quiet" aria-pressed="false">Falar</button>
+                    <button type="button" data-action-mode="teste" class="quiet" aria-pressed="false">Teste D20</button>
+                  </div>
+                  <div id="action-attribute-field" class="action-attribute-field" hidden>
+                    <label for="action-attribute">Atributo do teste</label>
+                    <select id="action-attribute"></select>
+                  </div>
+                  <label id="action-label" for="action-input">O que você faz?</label>
                   <textarea id="action-input" name="acao" required maxlength="1000" rows="3" placeholder="Descreva uma ação ou fale com alguém…"></textarea>
-                  <div class="actions"><button id="observe" type="button" class="quiet">Observar</button><button class="primary" type="submit">Enviar ação →</button></div>
+                  <div class="actions">
+                    <div class="explore-actions">
+                      <button id="observe" type="button" class="quiet">Observar</button>
+                      <a id="action-routes-link" href="#table-map" hidden>Ver rotas</a>
+                    </div>
+                    <button id="action-submit" class="primary" type="submit">Enviar ação →</button>
+                  </div>
                   <small id="action-help" role="status"></small>
                 </form>
               </section>
