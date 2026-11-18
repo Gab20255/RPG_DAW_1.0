@@ -2,16 +2,18 @@
 
 class BandejaD20 {
     constructor(bandeja) {
+        this.bandeja = bandeja;
         this.palco = bandeja.querySelector('#dice-stage');
         this.status = bandeja.querySelector('#dice-status');
+        this.resumo = bandeja.querySelector('#dice-summary');
+        this.desfecho = bandeja.querySelector('#dice-verdict');
         this.resultado = bandeja.querySelector('#dice-result');
         this.fila = [];
         this.cenaId = null;
         this.processando = false;
         this.encerrada = false;
         this.palco.hidden = false;
-        this.resultado.hidden = true;
-        this.resultado.textContent = '';
+        this.limparResultado();
         this.status.textContent = 'Aguardando uma rolagem da partida.';
         try {
             this.dado = new window.RPGDice.Dice(this.palco, {
@@ -43,25 +45,35 @@ class BandejaD20 {
             for (let indice = indiceInicial; indice < rolagens.length; indice++) {
                 if (this.encerrada || this.fila[0]?.animar === false) break;
                 const rolagem = rolagens[indice];
+                this.limparResultado();
                 if (animar && this.dado) {
-                    this.resultado.hidden = true;
                     this.status.textContent = 'Rolando D20…';
                     await this.dado.roll(rolagem.d20);
                     if (this.encerrada) return;
                 } else this.dado?.mostrarValor(rolagem.d20);
 
-                this.mostrarResultado(rolagem, turno, indice, rolagens.length);
+                this.mostrarResultado(rolagem, turno, indice, rolagens.length, animar);
             }
         }
         this.processando = false;
     }
 
-    mostrarResultado(rolagem, turno, indice, quantidade) {
+    limparResultado() {
+        this.resumo.hidden = true;
+        delete this.bandeja.dataset.desfecho;
+        delete this.bandeja.dataset.efeito;
+    }
+
+    mostrarResultado(rolagem, turno, indice, quantidade, animar) {
         const modificador = rolagem.bonus < 0 ? '− ' + Math.abs(rolagem.bonus) : '+ ' + rolagem.bonus;
         const posicao = quantidade > 1 ? ' · Rolagem ' + (indice + 1) + ' de ' + quantidade : '';
+        const sucesso = rolagem.sucesso === true;
         this.status.textContent = 'Turno ' + turno + posicao;
+        this.desfecho.textContent = sucesso ? 'Sucesso' : 'Falha';
         this.resultado.textContent = ['D20', rolagem.d20, modificador, '=', rolagem.total, '· Dificuldade', rolagem.dificuldade].join(' ');
-        this.resultado.hidden = false;
+        this.bandeja.dataset.desfecho = sucesso ? 'sucesso' : 'falha';
+        if (animar) this.bandeja.dataset.efeito = this.bandeja.dataset.desfecho;
+        this.resumo.hidden = false;
     }
 
     encerrar() {
