@@ -6,7 +6,7 @@ const { vincularParticipante } = require('./campanhaService');
 const { hashBaseCampanha } = require('./participantesCampanhaService');
 const { apresentarCampanha } = require('../http/apresentacaoCampanha');
 const { REGRAS, listarHabilidades } = require('../rules/habilidades');
-const { listarAvatares, sugerirAvatar } = require('./avataresService');
+const { listarAvatares, sugerirAvatar, sugerirAvatarComIa } = require('./avataresService');
 
 const MINIMO_JOGADORES = 2;
 const MAXIMO_JOGADORES = 8;
@@ -73,12 +73,13 @@ class Salas extends EmissorEventos {
     }
 
     async preverAvatar(id, corpo, sessao) {
-        validarCampos(corpo, ['classe_id', 'descricao_visual']);
+        validarCampos(corpo, ['classe_id', 'descricao_visual'], ['raca_id']);
         if (typeof corpo.descricao_visual !== 'string' || corpo.descricao_visual.trim().length > 1000) throw new ErroAplicacao(400, 'DESCRICAO_INVALIDA', 'Descrição visual deve ter até 1000 caracteres.');
-        const sala = this.acessar(id, sessao);
+        const sala = this.acessar(id, sessao, { ativa: true, preparacao: true });
         const mundo = await this.api.repositorio.carregar(sala.campanha_id);
         if (!mundo.classes.some(classe => classe.id === corpo.classe_id)) throw new ErroAplicacao(422, 'CLASSE_INVALIDA', 'Classe inválida.');
-        return { avatar: sugerirAvatar(corpo, mundo) };
+        if (corpo.raca_id !== undefined && !mundo.racas.some(raca => raca.id === corpo.raca_id)) throw new ErroAplicacao(422, 'ORIGEM_INVALIDA', 'Origem inválida.');
+        return sugerirAvatarComIa(corpo, mundo, contexto => this.api.obterServico().selecionarAvatar(contexto));
     }
 
     listar(sessao) {

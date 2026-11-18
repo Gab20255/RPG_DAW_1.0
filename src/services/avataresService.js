@@ -1,5 +1,10 @@
 const { AVATARES } = require('../data/avatares');
+const { CATALOGO_AVATARES } = require('../data/catalogoAvatares');
 const { BASES_RPG } = require('../data/basesRpg');
+
+const TEMAS = new Map(BASES_RPG.map(base => [base.id, base.nome]));
+const RETRATOS = new Map([...CATALOGO_AVATARES, ...AVATARES].map(avatar => [avatar.id, avatar]));
+const PALAVRAS_COMUNS = new Set(['uma', 'com', 'sem', 'sobre', 'pele', 'cabelo', 'cabelos', 'roupa', 'roupas', 'pessoa']);
 
 function normalizar(texto) {
     return ` ${String(texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
@@ -10,40 +15,89 @@ function correspondencias(texto, termos) {
 }
 
 function baseDosAvatares(mundo) {
-    if (AVATARES.some(avatar => avatar.base_id === mundo.origem?.base_id)) return mundo.origem.base_id;
+    if (TEMAS.has(mundo.origem?.base_id)) return mundo.origem.base_id;
     const contexto = normalizar(`${mundo.mundo.tema} ${mundo.mundo.tom}`);
     return [...BASES_RPG].sort((primeira, segunda) => correspondencias(contexto, segunda.palavras_chave) - correspondencias(contexto, primeira.palavras_chave))[0].id;
 }
 
 function apresentarAvatar(avatar) {
     return { id: avatar.id, nome: avatar.nome, descricao: avatar.descricao, base_id: avatar.base_id,
-        tema: avatar.paleta.nome, url: avatar.url, origem: 'catalogo_local' };
+        tema: TEMAS.get(avatar.base_id), url: avatar.url, origem: 'catalogo_local' };
 }
 
 function obterAvatar(id) {
-    const avatar = AVATARES.find(item => item.id === id);
+    const avatar = RETRATOS.get(id);
     if (!avatar) throw new Error('Avatar não encontrado no catálogo.');
     return apresentarAvatar(avatar);
 }
 
 function listarAvatares(mundo) {
     const base = baseDosAvatares(mundo);
-    return [...AVATARES].sort((primeiro, segundo) => Number(segundo.base_id === base) - Number(primeiro.base_id === base)).map(apresentarAvatar);
+    return [...CATALOGO_AVATARES].sort((primeiro, segundo) => Number(segundo.base_id === base) - Number(primeiro.base_id === base)).map(apresentarAvatar);
 }
 
-function sugerirAvatar(pedido, mundo) {
+function termos(texto) {
+    return new Set(normalizar(texto).trim().split(' ')
+        .filter(palavra => palavra.length >= 3 && !PALAVRAS_COMUNS.has(palavra))
+        .map(palavra => palavra.replace(/s$/, '').replace(/([a-z]{3})[ao]$/, '$1')));
+}
+
+function contarTermos(procurados, disponiveis) {
+    return [...procurados].filter(termo => disponiveis.has(termo)).length;
+}
+
+const INDICE_VISUAL = CATALOGO_AVATARES.map(avatar => ({
+    avatar,
+    visual: termos(avatar.descricao),
+    papeis: termos(avatar.papeis.join(' ')),
+}));
+
+function prepararSugestao(pedido, mundo) {
     const classe = mundo.classes.find(item => item.id === pedido.classe_id);
     if (!classe) throw new Error('Classe inválida.');
     if (typeof pedido.descricao_visual !== 'string' || pedido.descricao_visual.trim().length > 1000) throw new Error('Descrição visual inválida.');
     const base = baseDosAvatares(mundo);
-    const descricao = normalizar(pedido.descricao_visual);
-    const contextoClasse = normalizar(`${classe.nome} ${classe.descricao}`);
-    const candidatos = AVATARES.filter(avatar => avatar.base_id === base).map(avatar => ({ avatar,
-        pontos: (mundo.origem?.tipo === 'base_pronta' && avatar.classe_id === classe.id ? 45 : 0)
-            + correspondencias(contextoClasse, avatar.classes) * 10 + correspondencias(descricao, avatar.aparencia) * 30,
-    }));
-    candidatos.sort((primeiro, segundo) => segundo.pontos - primeiro.pontos);
-    return apresentarAvatar(candidatos[0].avatar);
+    const origem = mundo.racas?.find(item => item.id === pedido.raca_id)?.nome || '';
+    const descricao = termos(pedido.descricao_visual);
+    const termosClasse = termos(classe.nome);
+    const termosOrigem = termos(origem);
+    const candidatos = INDICE_VISUAL.map(item => {
+        const temaPrincipal = item.avatar.base_id === base;
+        const visual = contarTermos(descricao, item.visual);
+        const papel = contarTermos(descricao, item.papeis);
+        const origemCompativel = contarTermos(termosOrigem, item.papeis);
+        const pontos = (temaPrincipal ? 8 : 0) + visual * 4 + papel * 5
+            + origemCompativel * 7 + contarTermos(termosClasse, item.papeis) * 3;
+        return { avatar: item.avatar, temaPrincipal, visual, papel, origemCompativel, pontos };
+    }).sort((primeiro, segundo) => segundo.pontos - primeiro.pontos);
+
+    // O tema fornece opções suficientes. Acrescenta até três de outros temas com sinais de compatibilidade.
+    const externos = candidatos.filter(item => !item.temaPrincipal && (item.visual >= 2 || item.papel || item.origemCompativel)).slice(0, 3);
+    const disponiveis = candidatos.filter(item => item.temaPrincipal || externos.includes(item)).map(item => item.avatar);
+    return { disponiveis, contexto: {
+        tema: mundo.mundo.tema.slice(0, 400),
+        genero: TEMAS.get(base),
+        classe: classe.nome,
+        origem,
+        descricao_visual: pedido.descricao_visual.trim(),
+        candidatos: disponiveis.map(({ id, nome, descricao, papeis, base_id }) => ({ id, nome, descricao, papeis, tema: TEMAS.get(base_id) })),
+    } };
+}
+
+function sugerirAvatar(pedido, mundo) {
+    return apresentarAvatar(prepararSugestao(pedido, mundo).disponiveis[0]);
+}
+
+async function sugerirAvatarComIa(pedido, mundo, consultar) {
+    const { disponiveis, contexto } = prepararSugestao(pedido, mundo);
+    if (contexto.descricao_visual) {
+        try {
+            const id = await consultar(contexto);
+            const escolhido = disponiveis.find(avatar => avatar.id === id);
+            if (escolhido) return { avatar: apresentarAvatar(escolhido), selecao: 'ia' };
+        } catch { /* Permite criar a ficha mesmo com o provedor indisponível. */ }
+    }
+    return { avatar: apresentarAvatar(disponiveis[0]), selecao: 'local' };
 }
 
 function selecionarAvatar(pedido, mundo) {
@@ -104,4 +158,4 @@ const IMAGENS = new Map(AVATARES.map(avatar => [avatar.id, desenharAvatar(avatar
 
 function obterImagemAvatar(id) { return IMAGENS.get(id) || null; }
 
-module.exports = { listarAvatares, sugerirAvatar, selecionarAvatar, obterAvatar, obterImagemAvatar };
+module.exports = { listarAvatares, sugerirAvatar, sugerirAvatarComIa, selecionarAvatar, obterAvatar, obterImagemAvatar };

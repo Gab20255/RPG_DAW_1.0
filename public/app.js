@@ -104,16 +104,65 @@ async function openRoom(id) {
     if (state.socket?.connected) await followRoom(); else await loadHistory();
 }
 function option(id, name) { return `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`; }
+function searchText(text) {
+    return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
 function buildCharacterForm() {
     const catalog = state.catalog;
     $('#class-select').innerHTML = catalog.classes.map(c => option(c.id, c.nome)).join('');
     $('#race-select').innerHTML = catalog.racas.length ? catalog.racas.map(r => option(r.id, r.nome)).join('') : option('', 'Habitante do mundo');
     $('#skills-label').textContent = `Escolha ${catalog.regras.habilidades_por_personagem} habilidades`;
     $('#skill-options').innerHTML = catalog.habilidades.filter(h => h.disponivel).map(h => `<label class="skill-option"><input type="checkbox" name="habilidades_ids" value="${escapeHtml(h.id)}"><span>${escapeHtml(h.nome)}<small>${escapeHtml(h.descricao)} · Energia: ${escapeHtml(h.custoRecurso)}</small></span></label>`).join('');
-    $('#avatar-options').innerHTML = catalog.avatares.map(a => `<label class="avatar-option"><input type="radio" name="avatar_id" value="${escapeHtml(a.id)}" required><img src="${escapeHtml(safeImage(a.url))}" alt="${escapeHtml(a.descricao)}" loading="lazy"><span>${escapeHtml(a.nome)}</span></label>`).join('');
+    const themes = new Map(catalog.avatares.map(avatar => [avatar.base_id, avatar.tema]));
+    $('#avatar-theme').innerHTML = option('', 'Todos os temas') + [...themes].map(([id, name]) => option(id, name)).join('');
+    $('#avatar-options').innerHTML = catalog.avatares.map(avatar => {
+        const search = searchText(`${avatar.id} ${avatar.nome} ${avatar.descricao}`);
+        return `<label class="avatar-option" data-theme="${escapeHtml(avatar.base_id)}" data-search="${escapeHtml(search)}">
+            <input type="radio" name="avatar_id" value="${escapeHtml(avatar.id)}" required>
+            <img src="${escapeHtml(safeImage(avatar.url))}" alt="${escapeHtml(avatar.descricao)}" loading="lazy">
+            <span>${escapeHtml(avatar.nome)}</span>
+        </label>`;
+    }).join('');
     updateClass();
+    filterAvatars();
 }
-function selectAvatar(id) { for (const input of document.querySelectorAll('[name="avatar_id"]')) input.checked = input.value === id; }
+function showAvatarSelection() {
+    const input = $('#avatar-options input:checked');
+    const avatar = state.catalog.avatares.find(item => item.id === input?.value);
+    const outsideFilter = input?.closest('label').hidden;
+    $('#avatar-selected').textContent = avatar
+        ? `Selecionado: ${avatar.nome}${outsideFilter ? ' (fora do filtro atual)' : ''}`
+        : 'Selecione um retrato.';
+}
+function filterAvatars() {
+    const grid = $('#avatar-options');
+    const theme = $('#avatar-theme').value;
+    const terms = searchText($('#avatar-search').value).split(' ').filter(Boolean);
+    let visible = 0;
+    // Ocultar a opção mantém o rádio selecionado no formulário quando o jogador muda o filtro.
+    for (const card of grid.children) {
+        card.hidden = Boolean(theme && card.dataset.theme !== theme) || !terms.every(term => card.dataset.search.includes(term));
+        if (!card.hidden) visible++;
+    }
+    grid.hidden = visible === 0;
+    grid.scrollTop = 0;
+    $('#avatar-count').textContent = visible
+        ? `${visible} ${visible === 1 ? 'retrato' : 'retratos'}`
+        : 'Nenhum retrato encontrado. Tente outros filtros.';
+    $('#clear-avatar-filters').hidden = !theme && !$('#avatar-search').value;
+    showAvatarSelection();
+}
+function clearAvatarFilters() {
+    $('#avatar-search').value = '';
+    $('#avatar-theme').value = '';
+    filterAvatars();
+}
+function selectAvatar(id) {
+    const input = [...$('#avatar-options').querySelectorAll('input')].find(item => item.value === id);
+    if (input) input.checked = true;
+    showAvatarSelection();
+    return input;
+}
 function attributes(values) { return Object.entries(values || {}).map(([name, value]) => `<span class="attribute">${escapeHtml(name)} <strong>${escapeHtml(value)}</strong></span>`).join(''); }
 function updateClass() { const current = state.catalog.classes.find(c => c.id === $('#class-select').value); $('#class-description').textContent = current.descricao; $('#class-attributes').innerHTML = attributes(current.atributos); selectAvatar(current.avatar_sugerido_id); }
 function characterCard(ficha) {
@@ -190,7 +239,35 @@ $('#create-room').onsubmit = event => { event.preventDefault(); const body = Obj
 $('#join-room').onsubmit = event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); run(async () => { const { sala } = await api('/salas/entrar', body); await openRoom(sala.id); event.target.reset(); }); };
 $('#copy-code').onclick = () => run(async () => { try { await navigator.clipboard.writeText(state.room.codigo); notice('Código copiado. Compartilhe com seu grupo.'); } catch { notice(`Código da sala: ${state.room.codigo}`); } });
 $('#class-select').onchange = updateClass;
-$('#suggest-avatar').onclick = () => run(async () => { const { avatar } = await api(`/salas/${state.room.id}/avatar/previa`, { classe_id: $('#class-select').value, descricao_visual: $('#character-form [name="descricao_visual"]').value }); selectAvatar(avatar.id); notice(`Retrato sugerido: ${avatar.nome}.`); });
+$('#avatar-search').oninput = filterAvatars;
+$('#avatar-search').onkeydown = event => {
+    if (event.key === 'Enter' && !event.isComposing) event.preventDefault();
+};
+$('#avatar-theme').onchange = filterAvatars;
+$('#avatar-options').onchange = showAvatarSelection;
+$('#clear-avatar-filters').onclick = () => {
+    clearAvatarFilters();
+    $('#avatar-search').focus();
+};
+$('#suggest-avatar').onclick = () => run(async () => {
+    const classe_id = $('#class-select').value;
+    const raca_id = $('#race-select').value;
+    const descricao_visual = $('#character-form [name="descricao_visual"]').value;
+    const avatarAnterior = $('#avatar-options input:checked')?.value;
+    const { avatar, selecao } = await api(`/salas/${state.room.id}/avatar/previa`, {
+        classe_id, descricao_visual, ...(raca_id ? { raca_id } : {}),
+    });
+    if (classe_id !== $('#class-select').value || raca_id !== $('#race-select').value
+        || descricao_visual !== $('#character-form [name="descricao_visual"]').value
+        || avatarAnterior !== $('#avatar-options input:checked')?.value) return;
+    const card = selectAvatar(avatar.id)?.closest('label');
+    const outsideFilter = card?.hidden;
+    if (outsideFilter) clearAvatarFilters();
+    card?.scrollIntoView({ block: 'nearest' });
+    const origem = selecao === 'local' ? ' Seleção pelo catálogo local.' : '';
+    const filtros = outsideFilter ? ' Os filtros foram limpos para mostrar o retrato.' : '';
+    notice(`Retrato sugerido: ${avatar.nome}.${origem}${filtros}`);
+}, 'Buscando um retrato no catálogo…');
 $('#character-form').onsubmit = event => { event.preventDefault(); const data = new FormData(event.target), body = Object.fromEntries(data); body.habilidades_ids = data.getAll('habilidades_ids'); if (!body.raca_id) delete body.raca_id; if (body.habilidades_ids.length !== state.catalog.regras.habilidades_por_personagem) { notice(`Escolha exatamente ${state.catalog.regras.habilidades_por_personagem} habilidades.`, true); return; } run(async () => { await api(`/salas/${state.room.id}/personagem`, body); await refreshRoom(); notice('Personagem salvo. Confirme quando estiver pronto.'); }); };
 $('#ready').onclick = () => run(async () => { const me = state.room.membros.find(m => m.usuario_id === state.user.id); const { sala } = await api(`/salas/${state.room.id}/pronto`, { pronto: !me.pronto }); applyRoom(sala); renderRoom(); });
 $('#start-game').onclick = () => run(async () => { const { sala } = await api(`/salas/${state.room.id}/iniciar`, {}); applyRoom(sala); renderRoom(); });
