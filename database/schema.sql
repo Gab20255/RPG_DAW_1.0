@@ -109,6 +109,15 @@ CREATE TABLE IF NOT EXISTS campanhas (
     atualizada_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS pedidos_acoes (
+    campanha_id TEXT NOT NULL REFERENCES campanhas(id) ON DELETE CASCADE,
+    cena_id TEXT NOT NULL,
+    participante_id TEXT,
+    turno INTEGER NOT NULL,
+    acao TEXT NOT NULL,
+    PRIMARY KEY(campanha_id, cena_id)
+);
+
 CREATE TABLE IF NOT EXISTS salas_campanhas (
     sala_id INTEGER PRIMARY KEY REFERENCES salas(id) ON DELETE CASCADE,
     campanha_id TEXT NOT NULL UNIQUE REFERENCES campanhas(id) ON DELETE RESTRICT

@@ -117,7 +117,17 @@ class RepositorioCampanhasSqlite extends EmissorEventos {
         return mundo;
     }
 
-    async salvar(id, campanha, { revisao } = {}) { return this.salvarEstado(id, campanha, revisao); }
+    obterPedidoAcao(id, cenaId) {
+        return this.banco.obter('SELECT participante_id, turno, acao FROM pedidos_acoes WHERE campanha_id = ? AND cena_id = ?', id, cenaId);
+    }
+
+    async salvar(id, campanha, { revisao, cenaId } = {}) {
+        return this.salvarEstado(id, campanha, revisao, () => {
+            if (!cenaId) return;
+            const { participante_id, turno, acao } = campanha.pendente;
+            this.banco.executar('INSERT INTO pedidos_acoes(campanha_id, cena_id, participante_id, turno, acao) VALUES (?, ?, ?, ?, ?)', id, cenaId, participante_id, turno, acao);
+        });
+    }
 
     vincular(id, campanha, usuarioId, participanteId, ficha, revisao) {
         return this.salvarEstado(id, campanha, revisao, salaId => {

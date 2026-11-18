@@ -203,7 +203,7 @@ class Salas extends EmissorEventos {
     }
 
     agir(id, corpo, sessao) {
-        validarCampos(corpo, ['acao', 'turno_esperado'], ['participante_id']);
+        validarCampos(corpo, ['acao', 'turno_esperado'], ['participante_id', 'acao_id']);
         return this.enfileirar(id, sessao, sala => this.api.agir(sala.campanha_id, { ...corpo, participante_id: this.participante(sala, sessao, corpo.participante_id) }), { ativa: true, iniciada: true });
     }
 

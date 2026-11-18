@@ -442,11 +442,8 @@ function reconciliarEnvio() {
     const envio = envioSemConfirmacao;
     if (!envio || envio.geracao !== state.generation) return;
     if (state.campaign.turno < envio.turno) return;
-    const candidata = state.campaign.ultima_cena?.turno === envio.turno
-        ? state.campaign.ultima_cena
-        : [...state.scenes.values()].find(cena => cena.turno === envio.turno);
     envioSemConfirmacao = null;
-    if (candidata?.acao === envio.acao && candidata.participante_id === envio.participante) {
+    if (state.campaign.ultima_cena?.id === envio.id || state.scenes.has(envio.id)) {
         if (envio.doFormulario && lerAcaoFormulario() === envio.acao) resetarFormularioAcao();
         notice('A ação foi registrada. O resultado está no diário.');
     } else {
@@ -467,14 +464,17 @@ async function recuperarConfirmacao() {
 async function sendAction(action, doFormulario = false) {
     const id = state.room.id, generation = state.generation;
     const turno = state.campaign.turno;
-    const membro = state.room.membros.find(item => item.usuario_id === state.user.id);
+    const anterior = envioSemConfirmacao;
+    const acaoId = anterior?.geracao === generation && anterior.turno === turno + 1 && anterior.acao === action
+        ? anterior.id
+        : 'acao_' + Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
     envioSemConfirmacao = null;
     let resposta;
     try {
-        resposta = await ack('sala:acao', { sala_id: id, acao: action, turno_esperado: turno }, PRAZO_ACAO_MS);
+        resposta = await ack('sala:acao', { sala_id: id, acao: action, turno_esperado: turno, acao_id: acaoId }, PRAZO_ACAO_MS);
     } catch (erro) {
         if (erro.code !== 'CONFIRMACAO_INDISPONIVEL' || generation !== state.generation) throw erro;
-        envioSemConfirmacao = { geracao: generation, turno: turno + 1, acao: action, participante: membro?.participante_id, doFormulario };
+        envioSemConfirmacao = { id: acaoId, geracao: generation, turno: turno + 1, acao: action, doFormulario };
         await recuperarConfirmacao();
         return;
     }
