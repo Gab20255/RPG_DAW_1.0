@@ -26,7 +26,47 @@
     </section>
     <section id="room" hidden>
       <div class="section-heading"><div><button id="back" class="text-button">← Minhas aventuras</button><h1 id="room-title"></h1><p id="room-theme" class="muted"></p></div><div class="room-code"><small>CÓDIGO DO GRUPO</small><button id="copy-code" title="Copiar código"></button><span id="room-stage" class="badge"></span></div></div>
-      <div id="lobby" class="dashboard-grid"><div class="panel"><span class="eyebrow">ANTES DA PARTIDA</span><h2>Prepare seu personagem</h2><div id="character-saved" hidden></div><form id="character-form"><label>Nome do personagem<input name="nome" required minlength="2" maxlength="60"></label><div class="two-columns"><label>Classe<select name="classe_id" id="class-select" required></select></label><label>Origem<select name="raca_id" id="race-select"></select></label></div><p id="class-description" class="muted"></p><div id="class-attributes" class="attributes"></div><label>Aparência<textarea name="descricao_visual" required minlength="10" maxlength="1000" rows="3" placeholder="Cabelos, roupas e características marcantes…"></textarea></label><fieldset><legend id="skills-label">Habilidades</legend><div id="skill-options" class="skill-options"></div></fieldset><fieldset><legend>Seu retrato</legend><div class="avatar-heading"><p class="muted">Escolha um retrato para a sua ficha.</p><button type="button" id="suggest-avatar" class="quiet">Sugerir pela aparência</button></div><div id="avatar-options" class="avatar-options"></div></fieldset><button class="primary" type="submit">Salvar personagem</button></form></div><aside class="stack"><div class="panel"><span class="eyebrow">SEU GRUPO</span><h2>Sala de preparação</h2><div id="lobby-members"></div><p id="ready-description" class="muted"></p><button id="ready" class="primary">Estou pronto</button><button id="start-game" hidden>Iniciar aventura</button></div><div class="panel"><h2>O início da história</h2><p id="opening" class="prose"></p></div></aside></div>
+      <div id="lobby" class="dashboard-grid">
+        <div class="panel">
+          <span class="eyebrow">ANTES DA PARTIDA</span><h2>Prepare seu personagem</h2>
+          <div id="character-saved" hidden></div>
+          <form id="character-form">
+            <label>Nome do personagem<input name="nome" required minlength="2" maxlength="60"></label>
+            <div class="two-columns">
+              <label>Classe<select name="classe_id" id="class-select" required></select></label>
+              <label>Origem<select name="raca_id" id="race-select"></select></label>
+            </div>
+            <p id="class-description" class="muted"></p>
+            <div id="class-attributes" class="attributes"></div>
+            <label>Aparência<textarea name="descricao_visual" required minlength="10" maxlength="1000" rows="3" placeholder="Cabelos, roupas e características marcantes…"></textarea></label>
+            <fieldset><legend id="skills-label">Habilidades</legend><div id="skill-options" class="skill-options"></div></fieldset>
+            <fieldset>
+              <legend>Seu retrato</legend>
+              <div class="avatar-filters">
+                <label>Buscar retrato<input id="avatar-search" type="search" maxlength="120" placeholder="Nome, aparência ou código" autocomplete="off" aria-controls="avatar-options"></label>
+                <div class="avatar-theme-field">
+                  <label for="avatar-theme">Tema</label>
+                  <select id="avatar-theme" aria-controls="avatar-options"></select>
+                </div>
+              </div>
+              <div class="avatar-heading">
+                <p id="avatar-count" class="muted" role="status"></p>
+                <button type="button" id="clear-avatar-filters" class="quiet" hidden>Limpar filtros</button>
+              </div>
+              <div id="avatar-options" class="avatar-options"></div>
+              <div class="avatar-selection">
+                <p id="avatar-selected" class="muted" role="status"></p>
+                <button type="button" id="suggest-avatar" class="quiet">Sugerir pela aparência</button>
+              </div>
+            </fieldset>
+            <button class="primary" type="submit">Salvar personagem</button>
+          </form>
+        </div>
+        <aside class="stack">
+          <div class="panel"><span class="eyebrow">SEU GRUPO</span><h2>Sala de preparação</h2><div id="lobby-members"></div><p id="ready-description" class="muted"></p><button id="ready" class="primary">Estou pronto</button><button id="start-game" hidden>Iniciar aventura</button></div>
+          <div class="panel"><h2>O início da história</h2><p id="opening" class="prose"></p></div>
+        </aside>
+      </div>
       <div id="game" class="game-grid" hidden><div class="story-column"><section class="scene panel"><span class="eyebrow">LOCAL ATUAL</span><div class="scene-art" aria-hidden="true"><span>◇</span></div><h2 id="scene-name"></h2><p id="scene-description" class="prose"></p><div id="destinations" class="destinations"></div></section><section class="panel narrative"><div class="section-heading compact"><h2>Diário da aventura</h2><span id="turn" class="badge"></span></div><button id="older-history" class="quiet" hidden>Carregar cenas anteriores</button><div id="history" role="log" aria-live="polite" aria-relevant="additions"></div><div id="pending" class="pending" hidden><p id="pending-text"></p><div class="actions"><button id="retry">Tentar novamente</button><button id="discard" class="quiet">Descartar ação</button></div></div><p id="ending" class="prose" hidden></p><form id="action-form"><label for="action-input">O que você faz?</label><textarea id="action-input" name="acao" required maxlength="1000" rows="3" placeholder="Descreva uma ação ou fale com alguém…"></textarea><div class="actions"><button id="observe" type="button" class="quiet">Observar</button><button class="primary" type="submit">Enviar ação →</button></div><small id="action-help">As ações e os resultados são compartilhados com todo o grupo.</small></form></section></div><aside class="stack"><section class="panel"><span class="eyebrow">SUA FICHA</span><div id="my-character"></div></section><section class="panel"><h2>Na aventura</h2><div id="game-members"></div></section><section class="panel"><h2>Objetivos</h2><div id="objectives"></div></section></aside></div>
     </section>
   </main><footer>ENTRE MUNDOS <span>Uma história construída em conjunto.</span></footer>

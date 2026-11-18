@@ -11,15 +11,42 @@ async function cadastrar(page, name) {
     await page.locator('#login-form').getByLabel('Senha').fill('teste-seguro-123');
     await page.getByRole('button',{name:'Entrar na aventura'}).click(); await expect(page.locator('#dashboard')).toBeVisible();
 }
-async function personagem(page, name) {
+async function personagem(page, name, usarSugestao) {
     const form = page.locator('#character-form'); await expect(form).toBeVisible();
     await form.getByLabel('Nome do personagem').fill(name); await form.getByLabel('Aparência',{exact:true}).fill('Armadura de couro, cabelos curtos e olhos castanhos.');
     await form.locator('[name="habilidades_ids"]').nth(0).check(); await form.locator('[name="habilidades_ids"]').nth(1).check();
-    await form.getByRole('button',{name:'Sugerir pela aparência'}).click(); await expect(page.locator('#notice')).toContainText('Retrato sugerido');
-    await expect(form.locator('[name="avatar_id"][value="P08"]')).toBeChecked();
+    const search = form.getByRole('searchbox', { name: 'Buscar retrato' });
+    const theme = form.getByLabel('Tema', { exact: true });
+    const picker = form.locator('#avatar-options');
+    const count = form.locator('#avatar-count');
+    await expect(count).toHaveText('60 retratos');
+    await theme.selectOption('fantasia_sombria');
+    await expect(count).toHaveText('12 retratos');
+    await search.fill('trancas violeta');
+    await expect(count).toHaveText('1 retrato');
+    const ocultista = picker.locator('[value="P15"]');
+    await expect(ocultista).toBeVisible();
+    await ocultista.check();
+    await search.press('Enter');
+    await expect(form).toBeVisible();
+    await theme.selectOption('fantasia_medieval');
+    await expect(count).toContainText('Nenhum retrato encontrado');
+    await expect(form.locator('#avatar-selected')).toContainText('fora do filtro atual');
+    await expect(ocultista).toBeChecked();
+
+    let esperado = 'P15.png';
+    if (usarSugestao) {
+        await form.getByRole('button',{name:'Sugerir pela aparência'}).click();
+        await expect(page.locator('#notice')).toContainText('Os filtros foram limpos');
+        await expect(count).toHaveText('60 retratos');
+        const orc = picker.locator('[value="P08"]');
+        await expect(orc).toBeVisible();
+        await expect(orc).toBeChecked();
+        esperado = 'P08.jpeg';
+    }
     await form.getByRole('button',{name:'Salvar personagem'}).click(); await expect(form).toBeHidden();
     const portrait = page.locator('#character-saved img');
-    await expect(portrait).toHaveAttribute('src', '/avatares/P08.jpeg');
+    await expect(portrait).toHaveAttribute('src', `/avatares/${esperado}`);
     await expect.poll(() => portrait.evaluate(img => img.naturalWidth)).toBeGreaterThan(0);
     await page.getByRole('button',{name:'Estou pronto',exact:true}).click(); await expect(page.getByRole('button',{name:'Cancelar prontidão'})).toBeVisible();
 }
@@ -36,7 +63,7 @@ test('jornada completa com duas sessões isoladas, recarga, reconexão e falha d
         await expect(a.locator('#room')).toBeVisible(); const code = await a.locator('#copy-code').textContent();
         await b.locator('#join-room').getByLabel('Código da sala').fill(code); await b.getByRole('button',{name:'Entrar com código'}).click();
         await expect(a.locator('#lobby-members .member')).toHaveCount(2);
-        await personagem(a,'Lia'); await personagem(b,'Ivo');
+        await personagem(a,'Lia',false); await personagem(b,'Ivo',true);
         await expect(a.getByRole('button',{name:'Iniciar aventura'})).toBeEnabled();
         await a.screenshot({path:'test-results/lobby.png',fullPage:true});
         await a.getByRole('button',{name:'Iniciar aventura'}).click();
