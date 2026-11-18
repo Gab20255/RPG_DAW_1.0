@@ -12,6 +12,8 @@ const modosAcao = {
     falar: { rotulo: 'O que você diz?', dica: 'Ex.: Pergunto à estalajadeira o que ela viu.', botao: 'Enviar fala →' },
     teste: { rotulo: 'O que você tenta fazer?', dica: 'Ex.: Examinar os símbolos na porta.', botao: 'Fazer teste →' },
 };
+const PRAZO_ACAO_MS = 90000;
+let envioSemConfirmacao = null;
 let bandejaD20;
 let geracaoBandeja;
 function notice(message = '', error = false) { $('#notice').textContent = message; $('#notice').hidden = !message; $('#notice').classList.toggle('error', error); }
@@ -59,7 +61,7 @@ function lockControls() {
     const mine = campaign?.pendente?.participante_id === `usuario_${state.user?.id}`;
     $('#retry').disabled = state.busy || !state.synced || !state.socket?.connected || !mine || !room?.ativa;
     $('#discard').disabled = $('#retry').disabled || !!campaign?.pendente?.teste || !!campaign?.pendente?.resultado;
-    if (campaign) $('#action-help').textContent = !room?.ativa ? 'Esta sala foi encerrada.' : campaign.estado === 'concluida' ? 'Esta aventura foi concluída.' : !state.socket?.connected ? 'Reconectando ao grupo. Suas ações ficarão disponíveis após a sincronização.' : campaign.pendente ? 'Aguarde a conclusão da cena pendente.' : 'As ações e os resultados são compartilhados com todo o grupo.';
+    if (campaign) $('#action-help').textContent = !room?.ativa ? 'Esta sala foi encerrada.' : campaign.estado === 'concluida' ? 'Esta aventura foi concluída.' : !state.synced || !state.socket?.connected ? 'Sincronizando a mesa. O envio volta assim que a sala estiver atualizada.' : campaign.pendente ? 'Aguarde a conclusão da cena pendente.' : 'As ações e os resultados são compartilhados com todo o grupo.';
 }
 function applyRoom(room) { if (state.room?.id === room.id && room.revisao_preparacao < state.room.revisao_preparacao) return; state.room = room; }
 function applyCampaign(campaign) { if (state.campaign?.id === campaign.id && campaign.revisao < state.campaign.revisao) return; state.campaign = campaign; }
@@ -78,13 +80,35 @@ function connect() {
     socket.on('campanha:atualizada', ({ sala_id, campanha }) => { if (sala_id !== state.room?.id) return; applyCampaign(campanha); renderRoom({ animarDado: state.synced }); loadHistory().catch(error => notice(error.message, true)); });
     socket.connect();
 }
-function ack(event, body) { return new Promise((resolve, reject) => state.socket.timeout(15000).emit(event, body, (error, data) => error ? reject(new Error('A sala não respondeu. Tente atualizar a conexão.')) : data.ok ? resolve(data) : reject(new Error(data.erro?.mensagem || 'Falha na sincronização.')))); }
+async function ack(event, body, prazo = 15000) {
+    const socket = state.socket;
+    if (!socket?.connected) throw new Error('A conexão com a sala ainda está indisponível.');
+    let resposta;
+    try {
+        resposta = await socket.timeout(prazo).emitWithAck(event, body);
+    } catch {
+        const erro = new Error('Não foi possível confirmar o envio à sala.');
+        erro.code = 'CONFIRMACAO_INDISPONIVEL';
+        throw erro;
+    }
+    if (resposta?.ok) return resposta;
+    const publico = resposta?.erro;
+    if (publico?.status === 401 && state.user) expireSession();
+    const erro = new Error(publico?.mensagem || 'Falha na sincronização.');
+    erro.status = publico?.status;
+    erro.code = publico?.codigo;
+    throw erro;
+}
 async function followRoom() {
     const generation = state.generation, id = state.room.id;
+    const socket = state.socket, conexao = socket?.id;
     const data = await ack('sala:acompanhar', { sala_id: id });
-    if (generation !== state.generation || id !== state.room?.id) return;
+    if (generation !== state.generation || id !== state.room?.id || socket !== state.socket || conexao !== socket?.id) return;
     applyRoom(data.sala); applyCampaign(data.campanha); renderRoom(); await loadHistory();
-    if (generation === state.generation && id === state.room?.id && state.socket?.connected) { state.synced = true; lockControls(); }
+    if (generation === state.generation && id === state.room?.id && socket === state.socket && conexao === socket?.id && socket.connected) {
+        state.synced = true;
+        lockControls();
+    }
 }
 async function refreshRoom() {
     const id = state.room?.id, generation = state.generation; if (!id) return;
@@ -323,6 +347,7 @@ async function loadHistory(older = false) {
     }
     state.historyStart = Math.min(state.historyStart, start);
     renderHistory({ preservePosition: older });
+    reconciliarEnvio();
 }
 function historyNearBottom() {
     const history = $('#history');
@@ -413,11 +438,48 @@ function lerAcaoFormulario() {
     if (modo === 'teste') return '/teste ' + $('#action-attribute').value + ' ' + texto;
     return texto;
 }
+function reconciliarEnvio() {
+    const envio = envioSemConfirmacao;
+    if (!envio || envio.geracao !== state.generation) return;
+    if (state.campaign.turno < envio.turno) return;
+    const candidata = state.campaign.ultima_cena?.turno === envio.turno
+        ? state.campaign.ultima_cena
+        : [...state.scenes.values()].find(cena => cena.turno === envio.turno);
+    envioSemConfirmacao = null;
+    if (candidata?.acao === envio.acao && candidata.participante_id === envio.participante) {
+        if (envio.doFormulario && lerAcaoFormulario() === envio.acao) resetarFormularioAcao();
+        notice('A ação foi registrada. O resultado está no diário.');
+    } else {
+        notice('A sala avançou enquanto a confirmação estava pendente. Confira o diário antes de reenviar.', true);
+    }
+}
+async function recuperarConfirmacao() {
+    notice('A sala não confirmou o envio. A mesa vai recuperar o estado da partida; confira o diário antes de reenviar.', true);
+    if (!state.socket?.connected) return;
+    state.synced = false;
+    lockControls();
+    try {
+        await followRoom();
+    } catch {
+        if (state.socket?.connected) state.socket.disconnect().connect();
+    }
+}
 async function sendAction(action, doFormulario = false) {
     const id = state.room.id, generation = state.generation;
-    const { campanha } = await api(`/salas/${id}/acoes`, { acao: action, turno_esperado: state.campaign.turno });
+    const turno = state.campaign.turno;
+    const membro = state.room.membros.find(item => item.usuario_id === state.user.id);
+    envioSemConfirmacao = null;
+    let resposta;
+    try {
+        resposta = await ack('sala:acao', { sala_id: id, acao: action, turno_esperado: turno }, PRAZO_ACAO_MS);
+    } catch (erro) {
+        if (erro.code !== 'CONFIRMACAO_INDISPONIVEL' || generation !== state.generation) throw erro;
+        envioSemConfirmacao = { geracao: generation, turno: turno + 1, acao: action, participante: membro?.participante_id, doFormulario };
+        await recuperarConfirmacao();
+        return;
+    }
     if (generation !== state.generation) return;
-    applyCampaign(campanha);
+    applyCampaign(resposta.campanha);
     if (doFormulario && lerAcaoFormulario() === action) resetarFormularioAcao();
     renderRoom({ animarDado: state.synced });
     await loadHistory();
@@ -483,9 +545,18 @@ $('#action-form').onsubmit = event => {
 $('#observe').onclick = () => run(() => sendAction('/observar'), 'Observando o ambiente…');
 for (const [selector, route] of [['#retry','repetir'], ['#discard','descartar']]) $(selector).onclick = () => run(async () => {
     const pending = state.campaign.pendente;
-    const { campanha } = await api(`/salas/${state.room.id}/${route}`, { pedido_id: pending.id });
+    const generation = state.generation;
+    let resposta;
+    try {
+        resposta = await ack('sala:' + route, { sala_id: state.room.id, pedido_id: pending.id }, PRAZO_ACAO_MS);
+    } catch (erro) {
+        if (erro.code !== 'CONFIRMACAO_INDISPONIVEL' || generation !== state.generation) throw erro;
+        await recuperarConfirmacao();
+        return;
+    }
+    if (generation !== state.generation) return;
     if (lerAcaoFormulario() === pending.acao) resetarFormularioAcao();
-    applyCampaign(campanha); renderRoom(); await loadHistory();
+    applyCampaign(resposta.campanha); renderRoom(); await loadHistory();
 }, route === 'repetir' ? 'Retomando a cena pendente…' : 'Descartando a ação…');
 $('#older-history').onclick = () => run(() => loadHistory(true));
 $('#history').onscroll = updateHistoryNavigation;

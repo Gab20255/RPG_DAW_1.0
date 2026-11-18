@@ -5,8 +5,8 @@ const { ErroAplicacao } = require('../services/erroAplicacao');
 const { apresentarCampanha } = require('./apresentacaoCampanha');
 
 function erroPublico(erro) {
-    return erro instanceof ErroAplicacao ? { codigo: erro.codigo, mensagem: erro.message, ...(erro.detalhes ? { detalhes: erro.detalhes } : {}) }
-        : { codigo: 'FALHA_INTERNA', mensagem: 'Não foi possível concluir a operação.' };
+    return erro instanceof ErroAplicacao ? { codigo: erro.codigo, status: erro.status, mensagem: erro.message, ...(erro.detalhes ? { detalhes: erro.detalhes } : {}) }
+        : { codigo: 'FALHA_INTERNA', status: 500, mensagem: 'Não foi possível concluir a operação.' };
 }
 
 function conectarTempoReal(servidor, { autenticacao, salas, api, limitador }) {
