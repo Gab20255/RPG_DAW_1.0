@@ -162,7 +162,7 @@ function vincularParticipante(campanha, mundo, id, ficha) {
     return validarCampanha(proxima, mundo);
 }
 
-function registrarAcaoCampanha(campanha, mundo, entrada, { participanteId = null, rolar } = {}) {
+function registrarAcaoCampanha(campanha, mundo, entrada, { participanteId = null, cenaId, rolar } = {}) {
     campanha = migrarCampanha(campanha, mundo);
     conferirTexto(entrada, 1000, 'Ação');
     if (campanha.pendente) throw new Error('Cena anterior pendente.');
@@ -200,7 +200,7 @@ function registrarAcaoCampanha(campanha, mundo, entrada, { participanteId = null
         teste = resolverTeste(participante.ficha.atributos, atributo, descricao, rolar);
         tipo = 'teste';
     } else if (acao.startsWith('/')) throw new Error('Comando narrativo desconhecido.');
-    proxima.pendente = { id: criarIdentificador(), turno: campanha.turno + 1, acao, tipo, ambiente_id: ambienteId, resposta: null,
+    proxima.pendente = { id: cenaId ?? criarIdentificador(), turno: campanha.turno + 1, acao, tipo, ambiente_id: ambienteId, resposta: null,
         participante_id: participante?.id || null, personagem_id: participante?.ficha.id || null, teste, resultado };
     return validarCampanha(proxima, mundo);
 }
@@ -314,8 +314,8 @@ class CondutorCampanha {
         return operacao;
     }
 
-    executar(entrada, { participanteId = null } = {}) {
-        return this.enfileirar(() => this.processar(entrada, participanteId));
+    executar(entrada, { participanteId = null, cenaId } = {}) {
+        return this.enfileirar(() => this.processar(entrada, participanteId, cenaId));
     }
 
     vincular(id, ficha) {
@@ -328,7 +328,7 @@ class CondutorCampanha {
         });
     }
 
-    async processar(entrada, participanteId) {
+    async processar(entrada, participanteId, cenaId) {
         const { montarContextoCampanha } = require('./contextoCampanhaService');
         const { mundo, campanha: salva } = await this.carregar();
         let campanha = migrarCampanha(salva || iniciarCampanha(mundo), mundo);
@@ -345,8 +345,8 @@ class CondutorCampanha {
             return { campanha, narracao: campanha.diario.at(-1)?.narracao || mundo.historia.preludio };
         }
         if (entrada !== '/repetir') {
-            campanha = registrarAcaoCampanha(campanha, mundo, entrada, { participanteId, rolar: this.rolar });
-            await this.salvar(campanha);
+            campanha = registrarAcaoCampanha(campanha, mundo, entrada, { participanteId, cenaId, rolar: this.rolar });
+            await this.salvar(campanha, cenaId);
         }
         const pedido = campanha.pendente;
         if (pedido.teste || pedido.resultado) await this.aoResultado(structuredClone(pedido));

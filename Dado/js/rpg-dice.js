@@ -82,6 +82,7 @@
       this.floorY = this.H - R * 1.25;                    // posição do chão (ponto sob o dado) na tela
       this.dpr = Math.min(window.devicePixelRatio || 1, 2);
       this._raf = null; this._rolling = null;
+      this._resolverRolagem = null;
 
       this.root = document.createElement('div');
       this.root.className = 'rd-root';
@@ -116,6 +117,14 @@
       this._rest();
     }
 
+    mostrarValor(valor) {
+      if (this._rolling || !Number.isInteger(valor) || valor < 1 || valor > this.die.sides) return false;
+      this.value = valor;
+      this._rest();
+      this.canvas.setAttribute('aria-label', this.die.name + ': resultado ' + valor);
+      return true;
+    }
+
     /** Joga o dado; Promise<number> resolvida ao final. `forcado` fixa o resultado (testes). */
     roll(forcado) {
       if (this._rolling) return this._rolling;
@@ -132,6 +141,7 @@
       const t0 = performance.now();
 
       this._rolling = new Promise((resolve) => {
+        this._resolverRolagem = resolve;
         const step = (now) => {
           const t = Math.min(1, (now - t0) / dur);
           const e = 1 - Math.pow(1 - t, 2.6);
@@ -141,6 +151,7 @@
           this._draw();
           if (t < 1) { this._raf = requestAnimationFrame(step); return; }
           this.value = valor; this._rolling = null; this._raf = null;
+          this._resolverRolagem = null;
           this.canvas.setAttribute('aria-label', `${this.die.name}: resultado ${valor}`);
           this.container.dispatchEvent(new CustomEvent('diceroll', { bubbles: true, detail: { die: this.die.name, value: valor } }));
           if (typeof this.o.onRoll === 'function') this.o.onRoll(valor);
@@ -153,6 +164,10 @@
 
     destroy() {
       if (this._raf) cancelAnimationFrame(this._raf);
+      this._resolverRolagem?.(this.value);
+      this._resolverRolagem = null;
+      this._rolling = null;
+      this._raf = null;
       this.canvas.removeEventListener('click', this._onClick);
       this.root.remove();
     }

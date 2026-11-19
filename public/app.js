@@ -3,8 +3,28 @@ const $ = selector => document.querySelector(selector);
 const state = { user: null, room: null, campaign: null, catalog: null, socket: null, synced: false, busy: false, scenes: new Map(), historyStart: 0, screen: 'auth', generation: 0 };
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 const safeImage = url => typeof url === 'string' && /^\/avatares\/[a-zA-Z0-9_/.\-]+$/.test(url) ? url : '';
+const nomesAtributos = {
+    forca: 'Força', destreza: 'Destreza', inteligencia: 'Inteligência',
+    carisma: 'Carisma', constituicao: 'Constituição', sabedoria: 'Sabedoria',
+};
+const modosAcao = {
+    livre: { rotulo: 'O que você faz?', dica: 'Descreva uma ação ou fale com alguém…', botao: 'Enviar ação →' },
+    falar: { rotulo: 'O que você diz?', dica: 'Ex.: Pergunto à estalajadeira o que ela viu.', botao: 'Enviar fala →' },
+    teste: { rotulo: 'O que você tenta fazer?', dica: 'Ex.: Examinar os símbolos na porta.', botao: 'Fazer teste →' },
+};
+const PRAZO_ACAO_MS = 90000;
+let envioSemConfirmacao = null;
+let bandejaD20;
+let geracaoBandeja;
 function notice(message = '', error = false) { $('#notice').textContent = message; $('#notice').hidden = !message; $('#notice').classList.toggle('error', error); }
-function show(screen) { state.screen = screen; for (const id of ['auth', 'dashboard', 'room']) $(`#${id}`).hidden = id !== screen; }
+function show(screen) {
+    if (screen !== 'room') {
+        bandejaD20?.encerrar();
+        bandejaD20 = undefined;
+    }
+    state.screen = screen;
+    for (const id of ['auth', 'dashboard', 'room']) document.getElementById(id).hidden = id !== screen;
+}
 function localKey() { return `rpg:sala:${state.user.id}`; }
 function rememberedRoom(value) { try { if (value === undefined) return localStorage.getItem(localKey()); if (value === null) localStorage.removeItem(localKey()); else localStorage.setItem(localKey(), value); } catch { /* Armazenamento opcional em navegadores privados. */ } }
 function expireSession() {
@@ -37,11 +57,11 @@ function lockControls() {
     $('#ready').disabled = state.busy || !room?.ativa || !me?.personagem_id || room.etapa !== 'preparacao';
     $('#start-game').disabled = state.busy || !room?.preparacao.pronta_para_iniciar;
     const canAct = !state.busy && state.synced && !!state.socket?.connected && room?.ativa && room.etapa === 'em_andamento' && campaign?.estado !== 'concluida' && !campaign?.pendente;
-    document.querySelectorAll('#action-form button, #action-input, #destinations button').forEach(el => { el.disabled = !canAct; });
+    document.querySelectorAll('#action-form button, #action-form select, #action-input, #destinations button').forEach(el => { el.disabled = !canAct; });
     const mine = campaign?.pendente?.participante_id === `usuario_${state.user?.id}`;
     $('#retry').disabled = state.busy || !state.synced || !state.socket?.connected || !mine || !room?.ativa;
     $('#discard').disabled = $('#retry').disabled || !!campaign?.pendente?.teste || !!campaign?.pendente?.resultado;
-    if (campaign) $('#action-help').textContent = !room?.ativa ? 'Esta sala foi encerrada.' : campaign.estado === 'concluida' ? 'Esta aventura foi concluída.' : !state.socket?.connected ? 'Reconectando ao grupo. Suas ações ficarão disponíveis após a sincronização.' : campaign.pendente ? 'Aguarde a conclusão da cena pendente.' : 'As ações e os resultados são compartilhados com todo o grupo.';
+    if (campaign) $('#action-help').textContent = !room?.ativa ? 'Esta sala foi encerrada.' : campaign.estado === 'concluida' ? 'Esta aventura foi concluída.' : !state.synced || !state.socket?.connected ? 'Sincronizando a mesa. O envio volta assim que a sala estiver atualizada.' : campaign.pendente ? 'Aguarde a conclusão da cena pendente.' : 'As ações e os resultados são compartilhados com todo o grupo.';
 }
 function applyRoom(room) { if (state.room?.id === room.id && room.revisao_preparacao < state.room.revisao_preparacao) return; state.room = room; }
 function applyCampaign(campaign) { if (state.campaign?.id === campaign.id && campaign.revisao < state.campaign.revisao) return; state.campaign = campaign; }
@@ -57,16 +77,38 @@ function connect() {
     socket.on('connect_error', error => { $('#connection').textContent = '○ Sem conexão'; if (['SESSAO_INVALIDA', 'SESSAO_EXPIRADA', 'NAO_AUTENTICADO'].includes(error.data?.codigo)) expireSession(); else api('/autenticacao/sessao').catch(e => notice(e.message, true)); lockControls(); });
     socket.on('sessao:encerrada', () => { expireSession(); notice('Sua sessão terminou. Entre novamente.', true); });
     socket.on('sala:atualizada', ({ sala }) => { if (sala.id !== state.room?.id) return; applyRoom(sala); renderRoom(); });
-    socket.on('campanha:atualizada', ({ sala_id, campanha }) => { if (sala_id !== state.room?.id) return; applyCampaign(campanha); renderRoom(); loadHistory().catch(error => notice(error.message, true)); });
+    socket.on('campanha:atualizada', ({ sala_id, campanha }) => { if (sala_id !== state.room?.id) return; applyCampaign(campanha); renderRoom({ animarDado: state.synced }); loadHistory().catch(error => notice(error.message, true)); });
     socket.connect();
 }
-function ack(event, body) { return new Promise((resolve, reject) => state.socket.timeout(15000).emit(event, body, (error, data) => error ? reject(new Error('A sala não respondeu. Tente atualizar a conexão.')) : data.ok ? resolve(data) : reject(new Error(data.erro?.mensagem || 'Falha na sincronização.')))); }
+async function ack(event, body, prazo = 15000) {
+    const socket = state.socket;
+    if (!socket?.connected) throw new Error('A conexão com a sala ainda está indisponível.');
+    let resposta;
+    try {
+        resposta = await socket.timeout(prazo).emitWithAck(event, body);
+    } catch {
+        const erro = new Error('Não foi possível confirmar o envio à sala.');
+        erro.code = 'CONFIRMACAO_INDISPONIVEL';
+        throw erro;
+    }
+    if (resposta?.ok) return resposta;
+    const publico = resposta?.erro;
+    if (publico?.status === 401 && state.user) expireSession();
+    const erro = new Error(publico?.mensagem || 'Falha na sincronização.');
+    erro.status = publico?.status;
+    erro.code = publico?.codigo;
+    throw erro;
+}
 async function followRoom() {
     const generation = state.generation, id = state.room.id;
+    const socket = state.socket, conexao = socket?.id;
     const data = await ack('sala:acompanhar', { sala_id: id });
-    if (generation !== state.generation || id !== state.room?.id) return;
+    if (generation !== state.generation || id !== state.room?.id || socket !== state.socket || conexao !== socket?.id) return;
     applyRoom(data.sala); applyCampaign(data.campanha); renderRoom(); await loadHistory();
-    if (generation === state.generation && id === state.room?.id && state.socket?.connected) { state.synced = true; lockControls(); }
+    if (generation === state.generation && id === state.room?.id && socket === state.socket && conexao === socket?.id && socket.connected) {
+        state.synced = true;
+        lockControls();
+    }
 }
 async function refreshRoom() {
     const id = state.room?.id, generation = state.generation; if (!id) return;
@@ -100,7 +142,7 @@ async function openRoom(id) {
     const [data, catalog] = await Promise.all([api(`/salas/${id}`), api(`/salas/${id}/catalogo`)]);
     if (generation !== state.generation) return;
     state.room = data.sala; state.campaign = data.campanha; state.catalog = catalog; state.scenes = new Map(); state.historyStart = Math.max(0, data.campanha.turno - 20);
-    rememberedRoom(id); $('#character-form').reset(); $('#action-form').reset(); buildCharacterForm(); show('room'); renderRoom();
+    rememberedRoom(id); $('#character-form').reset(); resetarFormularioAcao(); buildCharacterForm(); show('room'); renderRoom();
     if (state.socket?.connected) await followRoom(); else await loadHistory();
 }
 function option(id, name) { return `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`; }
@@ -165,27 +207,123 @@ function selectAvatar(id) {
 }
 function attributes(values) { return Object.entries(values || {}).map(([name, value]) => `<span class="attribute">${escapeHtml(name)} <strong>${escapeHtml(value)}</strong></span>`).join(''); }
 function updateClass() { const current = state.catalog.classes.find(c => c.id === $('#class-select').value); $('#class-description').textContent = current.descricao; $('#class-attributes').innerHTML = attributes(current.atributos); selectAvatar(current.avatar_sugerido_id); }
-function characterCard(ficha) {
-    return `<div class="character-header"><img class="portrait" src="${escapeHtml(safeImage(ficha.avatar_url))}" alt="Retrato de ${escapeHtml(ficha.nome)}"><div><h3>${escapeHtml(ficha.nome)}</h3><small>${escapeHtml(ficha.classe)} · ${escapeHtml(ficha.raca)}</small></div></div><div class="meter"><label>Vida <span>${ficha.vida} / ${ficha.vida_max}</span></label><progress aria-label="Vida" max="${ficha.vida_max}" value="${ficha.vida}"></progress></div><div class="meter energy"><label>Energia <span>${ficha.energia} / ${ficha.energia_max}</span></label><progress aria-label="Energia" max="${ficha.energia_max}" value="${ficha.energia}"></progress></div><div class="attributes">${attributes(ficha.atributos)}</div><h3>Habilidades</h3><ul class="inventory">${ficha.habilidades.map(h => `<li>${escapeHtml(h.nome)}<small> · ${escapeHtml(h.custoRecurso)} energia</small></li>`).join('')}</ul><h3>Inventário</h3><ul class="inventory">${ficha.inventario.map(i => `<li><strong>${escapeHtml(i.nome)}</strong><small> — ${escapeHtml(i.descricao)}</small></li>`).join('') || '<li>Nenhum item.</li>'}</ul>`;
+function characterCard(ficha, inventarioEmSeparado = false) {
+    const itens = ficha.inventario.map(item => `<li><strong>${escapeHtml(item.nome)}</strong><small> — ${escapeHtml(item.descricao)}</small></li>`);
+    const habilidades = ficha.habilidades.map(habilidade => `<li>${escapeHtml(habilidade.nome)}<small> · ${escapeHtml(habilidade.custoRecurso)} energia</small></li>`);
+    return `<div class="character-header">
+        <img class="portrait" src="${escapeHtml(safeImage(ficha.avatar_url))}" alt="Retrato de ${escapeHtml(ficha.nome)}">
+        <div><h3>${escapeHtml(ficha.nome)}</h3><small>${escapeHtml(ficha.classe)} · ${escapeHtml(ficha.raca)}</small></div>
+        </div>
+        <div class="meter">
+            <label>Vida <span>${ficha.vida} / ${ficha.vida_max}</span></label>
+            <progress aria-label="Vida" max="${ficha.vida_max}" value="${ficha.vida}"></progress>
+        </div>
+        <div class="meter energy">
+            <label>Energia <span>${ficha.energia} / ${ficha.energia_max}</span></label>
+            <progress aria-label="Energia" max="${ficha.energia_max}" value="${ficha.energia}"></progress>
+        </div>
+        <div class="attributes">${attributes(ficha.atributos)}</div>
+        <h3>Habilidades</h3><ul class="inventory">${habilidades.join('')}</ul>
+        ${inventarioEmSeparado ? '' : `<h3>Inventário</h3><ul class="inventory">${itens.join('') || '<li>Nenhum item.</li>'}</ul>`}`;
 }
-function renderRoom() {
+function renderInventory(ficha) {
+    const target = $('#my-inventory');
+    const itens = ficha?.inventario || [];
+    const key = JSON.stringify([ficha?.id, itens]);
+    if (target.dataset.key === key) return;
+    target.dataset.key = key;
+    target.innerHTML = itens.map(item => {
+        const etiquetas = [item.tipo, item.raridade].filter(Boolean).map(escapeHtml);
+        return `<details class="inventory-entry">
+            <summary><strong>${escapeHtml(item.nome)}</strong><small>${etiquetas.join(' · ')}</small></summary>
+            <div class="inventory-details">
+                <p>${escapeHtml(item.descricao)}</p>
+                ${item.efeito ? `<p><strong>Efeito</strong> ${escapeHtml(item.efeito)}</p>` : ''}
+            </div>
+        </details>`;
+    }).join('') || '<p class="muted">Nenhum item no inventário.</p>';
+}
+function renderParty(sala, campanha) {
+    $('#game-members').innerHTML = sala.membros.map(membro => {
+        const ficha = campanha.participantes.find(p => p.id === membro.participante_id)?.ficha;
+        const nome = ficha?.nome || membro.username;
+        const avatar = safeImage(ficha?.avatar_url);
+        const retrato = avatar ? `<img src="${escapeHtml(avatar)}" alt="">` : `<span class="party-initial" aria-hidden="true">${escapeHtml(nome[0]?.toUpperCase())}</span>`;
+        const voce = membro.usuario_id === state.user.id;
+        return `<li class="party-token${voce ? ' party-token--you' : ''}">
+            <span class="party-portrait">${retrato}</span>
+            <span class="party-info"><strong>${escapeHtml(nome)}</strong><small>${ficha ? `${ficha.vida} de ${ficha.vida_max} PV` : 'Sem ficha'}${voce ? ' · Você' : ''}</small></span>
+        </li>`;
+    }).join('');
+}
+function renderSceneArt(scene) {
+    const mapa = $('#map-view');
+    const status = $('#map-image-status');
+    const url = safeImage(scene?.imagem_url);
+    const chave = `${scene?.id ?? ''}:${url}`;
+    if (mapa.dataset.cenario === chave) return;
+    mapa.dataset.cenario = chave;
+
+    const imagem = new Image();
+    imagem.id = 'scene-image';
+    imagem.alt = '';
+    imagem.decoding = 'async';
+    imagem.hidden = true;
+    $('#scene-image').replaceWith(imagem);
+    status.hidden = false;
+    status.textContent = url ? 'Carregando cenário…' : 'Local sem ilustração';
+    if (!url) return;
+
+    imagem.onload = () => {
+        if (!imagem.isConnected) return;
+        imagem.hidden = false;
+        status.hidden = true;
+        status.textContent = '';
+    };
+    imagem.onerror = () => {
+        if (!imagem.isConnected) return;
+        status.textContent = 'Imagem do cenário indisponível';
+    };
+    imagem.src = url;
+}
+function sincronizarDadoDaMesa(campanha, animar) {
+    const novaMesa = !bandejaD20 || geracaoBandeja !== state.generation;
+    if (novaMesa) {
+        bandejaD20?.encerrar();
+        bandejaD20 = new BandejaD20($('#table-dice'));
+        geracaoBandeja = state.generation;
+    }
+    bandejaD20.sincronizar(campanha.ultima_rolagem, animar && !novaMesa);
+}
+function renderRoom({ animarDado = false } = {}) {
     const sala = state.room, campanha = state.campaign; if (!sala || !campanha) return;
     $('#room-title').textContent = sala.nome; $('#room-theme').textContent = campanha.mundo.tom; $('#copy-code').textContent = sala.codigo;
     $('#room-stage').textContent = !sala.ativa ? 'Sala encerrada' : sala.etapa === 'preparacao' ? 'Preparação' : 'Em aventura';
     const lobby = sala.ativa && sala.etapa === 'preparacao'; $('#lobby').hidden = !lobby; $('#game').hidden = lobby;
+    $('#room').classList.toggle('room-playing', !lobby);
     const me = sala.membros.find(m => m.usuario_id === state.user.id), ficha = campanha.participantes.find(p => p.id === me?.participante_id)?.ficha;
-    const members = sala.membros.map(m => { const character = campanha.participantes.find(p => p.id === m.participante_id)?.ficha; return `<div class="member">${character ? `<img src="${escapeHtml(safeImage(character.avatar_url))}" alt="">` : '<span class="brand-mark">◇</span>'}<div class="member-info"><strong>${escapeHtml(character?.nome || m.username)}</strong><small>${escapeHtml(m.username)}${m.usuario_id === sala.host_id ? ' · anfitrião' : ''}</small></div><span class="badge">${lobby ? m.pronto ? 'Pronto' : character ? 'Preparando' : 'Sem ficha' : character ? `${character.vida} PV` : 'Sem ficha'}</span></div>`; }).join('');
-    $('#lobby-members').innerHTML = members; $('#game-members').innerHTML = members;
+    const members = sala.membros.map(m => { const character = campanha.participantes.find(p => p.id === m.participante_id)?.ficha; return `<div class="member">${character ? `<img src="${escapeHtml(safeImage(character.avatar_url))}" alt="">` : '<span class="brand-mark">◇</span>'}<div class="member-info"><strong>${escapeHtml(character?.nome || m.username)}</strong><small>${escapeHtml(m.username)}${m.usuario_id === sala.host_id ? ' · anfitrião' : ''}</small></div><span class="badge">${m.pronto ? 'Pronto' : character ? 'Preparando' : 'Sem ficha'}</span></div>`; }).join('');
+    $('#lobby-members').innerHTML = members;
+    if (!lobby) {
+        sincronizarDadoDaMesa(campanha, animarDado);
+        renderParty(sala, campanha);
+    }
     $('#character-form').hidden = !!ficha; $('#character-saved').hidden = !ficha;
-    if (ficha) { $('#character-saved').innerHTML = characterCard(ficha); $('#my-character').innerHTML = characterCard(ficha); } else $('#my-character').textContent = 'Você não possui uma ficha nesta sala.';
+    if (ficha) {
+        if (lobby) $('#character-saved').innerHTML = characterCard(ficha);
+        else $('#my-character').innerHTML = characterCard(ficha, true);
+    } else $('#my-character').textContent = 'Você não possui uma ficha nesta sala.';
+    if (!lobby) renderInventory(ficha);
     $('#opening').textContent = campanha.abertura;
     $('#ready').textContent = me?.pronto ? 'Cancelar prontidão' : 'Estou pronto';
     $('#ready-description').textContent = `${sala.preparacao.jogadores_prontos} de ${sala.membros.length} jogadores prontos. São necessários pelo menos ${sala.preparacao.minimo_jogadores} jogadores com ficha.`;
     $('#start-game').hidden = sala.host_id !== state.user.id;
     const scene = campanha.mundo.ambientes.find(a => a.id === campanha.ambiente_id);
     $('#scene-name').textContent = scene?.nome || 'Local desconhecido'; $('#scene-description').textContent = scene?.descricao || '';
+    if (!lobby) renderSceneArt(scene);
     $('#destinations').replaceChildren();
     for (const id of scene?.conexoes_ids || []) { const place = campanha.mundo.ambientes.find(a => a.id === id); if (!place) continue; const button = document.createElement('button'); button.textContent = `Ir para ${place.nome} →`; button.onclick = () => run(() => sendAction(`/ir ${id}`), 'O grupo segue para um novo local…'); $('#destinations').append(button); }
+    $('#action-routes-link').hidden = !$('#destinations').childElementCount;
     $('#turn').textContent = `Turno ${campanha.turno}`;
     $('#objectives').innerHTML = campanha.objetivos.map(o => `<div class="objective">${escapeHtml(o.descricao)}<small>${escapeHtml(o.estado)}</small></div>`).join('');
     $('#pending').hidden = !campanha.pendente;
@@ -208,25 +346,143 @@ async function loadHistory(older = false) {
         if (older || !history.cenas.length || offset >= history.total) break;
     }
     state.historyStart = Math.min(state.historyStart, start);
-    renderHistory();
+    renderHistory({ preservePosition: older });
+    reconciliarEnvio();
 }
-function renderHistory() {
-    const target = $('#history'), nearBottom = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
-    const scenes = [...state.scenes.values()].sort((a,b) => a.turno - b.turno);
-    const key = `${state.campaign?.id}:${scenes.map(s => s.id).join(',')}`;
-    if (target.dataset.key === key) return; target.dataset.key = key;
-    target.innerHTML = `<article class="scene-entry"><small>MESTRE · ABERTURA</small><p>${escapeHtml(state.campaign?.abertura)}</p></article>` + scenes.map(scene => {
-        const name = state.campaign.participantes.find(p => p.id === scene.participante_id)?.ficha.nome || 'Grupo';
-        return `<article class="scene-entry"><small>TURNO ${scene.turno} · ${escapeHtml(name)}</small><p class="action">${escapeHtml(scene.acao)}</p>${scene.teste ? `<p class="result">D20: ${scene.teste.d20} + ${scene.teste.bonus} = ${scene.teste.total} · ${scene.teste.sucesso ? 'Sucesso' : 'Falha'}</p>` : ''}${scene.resultado ? `<p class="result">${escapeHtml(scene.resultado.resumo)}</p>` : ''}<p>${escapeHtml(scene.narracao)}</p>${scene.exige_resolucao_mecanica ? '<small>Esta intenção ainda exige resolução pelas regras do jogo.</small>' : ''}</article>`;
-    }).join('');
+function historyNearBottom() {
+    const history = $('#history');
+    return history.scrollHeight - history.scrollTop - history.clientHeight < 48;
+}
+function updateHistoryNavigation() {
+    $('#latest-history').hidden = historyNearBottom();
     $('#older-history').hidden = state.historyStart === 0;
-    if (nearBottom) target.scrollTop = target.scrollHeight;
 }
-async function sendAction(action) {
+function descreverAcao(scene, place) {
+    if (scene.tipo === 'transicao' && place) return 'Ir para ' + place;
+    if (scene.tipo === 'observacao') return 'Observar o local';
+    if (scene.tipo === 'dialogo') return 'Diz: ' + scene.acao.replace(/^\/falar\s+/, '');
+    if (scene.teste) {
+        const atributo = nomesAtributos[scene.teste.atributo] || scene.teste.atributo;
+        return 'Teste de ' + atributo + ': ' + scene.teste.descricao;
+    }
+    return scene.acao;
+}
+function sceneEntry(scene) {
+    const { mundo, participantes } = state.campaign;
+    const author = participantes.find(item => item.id === scene.participante_id)?.ficha.nome || 'Grupo';
+    const place = mundo.ambientes.find(item => item.id === scene.ambiente_id)?.nome;
+    const action = descreverAcao(scene, place);
+    const test = scene.teste;
+    const entry = document.createElement('article');
+    entry.className = 'scene-entry';
+    entry.dataset.sceneId = scene.id;
+    entry.innerHTML = `<header class="scene-entry-heading">
+        <span>Turno ${scene.turno} · ${escapeHtml(author)}</span>
+        ${place ? `<span>${escapeHtml(place)}</span>` : ''}
+        </header>
+        <p class="action">${escapeHtml(action)}</p>
+        ${test ? `<p class="result ${test.sucesso ? 'result--success' : 'result--failure'}">
+            <strong>${test.sucesso ? 'Sucesso' : 'Falha'}</strong> · D20 ${test.d20} ${test.bonus < 0 ? '−' : '+'} ${Math.abs(test.bonus)} = ${test.total}</p>` : ''}
+        ${scene.resultado ? `<p class="result">${escapeHtml(scene.resultado.resumo)}</p>` : ''}
+        <p class="scene-narration">${escapeHtml(scene.narracao)}</p>
+        ${scene.exige_resolucao_mecanica ? '<small>Esta intenção ainda exige resolução pelas regras do jogo.</small>' : ''}`;
+    return entry;
+}
+function renderHistory({ preservePosition = false } = {}) {
+    const target = $('#history');
+    const key = `${state.generation}:${state.campaign.id}`;
+    const reset = target.dataset.key !== key;
+    const followLatest = reset || (!preservePosition && historyNearBottom());
+    if (reset) {
+        target.dataset.key = key;
+        target.innerHTML = `<article class="scene-entry scene-opening">
+            <header class="scene-entry-heading">Mestre · Abertura</header>
+            <p class="scene-narration">${escapeHtml(state.campaign.abertura)}</p>
+        </article>`;
+    }
+
+    const top = target.getBoundingClientRect().top;
+    const anchor = followLatest ? null : [...target.children].find(entry => entry.getBoundingClientRect().bottom > top);
+    const anchorPosition = anchor?.getBoundingClientRect().top;
+    const scenes = [...state.scenes.values()].sort((a, b) => a.turno - b.turno);
+    let cursor = target.firstElementChild.nextElementSibling;
+    for (const scene of scenes) {
+        if (cursor?.dataset.sceneId === scene.id) cursor = cursor.nextElementSibling;
+        else target.insertBefore(sceneEntry(scene), cursor);
+    }
+    if (followLatest) target.scrollTop = target.scrollHeight;
+    else if (anchor) target.scrollTop += anchor.getBoundingClientRect().top - anchorPosition;
+    updateHistoryNavigation();
+}
+function selecionarModoAcao(modo) {
+    const { rotulo, dica, botao } = modosAcao[modo];
+    const formulario = $('#action-form');
+    formulario.dataset.mode = modo;
+    $('#action-attribute-field').hidden = modo !== 'teste';
+    $('#action-label').textContent = rotulo;
+    $('#action-input').placeholder = dica;
+    $('#action-submit').textContent = botao;
+    for (const controle of formulario.querySelectorAll('[data-action-mode]')) {
+        controle.setAttribute('aria-pressed', String(controle.dataset.actionMode === modo));
+    }
+}
+function resetarFormularioAcao() {
+    $('#action-form').reset();
+    selecionarModoAcao('livre');
+}
+function lerAcaoFormulario() {
+    const texto = $('#action-input').value.trim();
+    if (!texto) return '';
+    const modo = $('#action-form').dataset.mode;
+    if (modo === 'falar') return '/falar ' + texto;
+    if (modo === 'teste') return '/teste ' + $('#action-attribute').value + ' ' + texto;
+    return texto;
+}
+function reconciliarEnvio() {
+    const envio = envioSemConfirmacao;
+    if (!envio || envio.geracao !== state.generation) return;
+    if (state.campaign.turno < envio.turno) return;
+    envioSemConfirmacao = null;
+    if (state.campaign.ultima_cena?.id === envio.id || state.scenes.has(envio.id)) {
+        if (envio.doFormulario && lerAcaoFormulario() === envio.acao) resetarFormularioAcao();
+        notice('A ação foi registrada. O resultado está no diário.');
+    } else {
+        notice('A sala avançou enquanto a confirmação estava pendente. Confira o diário antes de reenviar.', true);
+    }
+}
+async function recuperarConfirmacao() {
+    notice('A sala não confirmou o envio. A mesa vai recuperar o estado da partida; confira o diário antes de reenviar.', true);
+    if (!state.socket?.connected) return;
+    state.synced = false;
+    lockControls();
+    try {
+        await followRoom();
+    } catch {
+        if (state.socket?.connected) state.socket.disconnect().connect();
+    }
+}
+async function sendAction(action, doFormulario = false) {
     const id = state.room.id, generation = state.generation;
-    const { campanha } = await api(`/salas/${id}/acoes`, { acao: action, turno_esperado: state.campaign.turno });
+    const turno = state.campaign.turno;
+    const anterior = envioSemConfirmacao;
+    const acaoId = anterior?.geracao === generation && anterior.turno === turno + 1 && anterior.acao === action
+        ? anterior.id
+        : 'acao_' + Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+    envioSemConfirmacao = null;
+    let resposta;
+    try {
+        resposta = await ack('sala:acao', { sala_id: id, acao: action, turno_esperado: turno, acao_id: acaoId }, PRAZO_ACAO_MS);
+    } catch (erro) {
+        if (erro.code !== 'CONFIRMACAO_INDISPONIVEL' || generation !== state.generation) throw erro;
+        envioSemConfirmacao = { id: acaoId, geracao: generation, turno: turno + 1, acao: action, doFormulario };
+        await recuperarConfirmacao();
+        return;
+    }
     if (generation !== state.generation) return;
-    applyCampaign(campanha); $('#action-form').reset(); renderRoom(); await loadHistory();
+    applyCampaign(resposta.campanha);
+    if (doFormulario && lerAcaoFormulario() === action) resetarFormularioAcao();
+    renderRoom({ animarDado: state.synced });
+    await loadHistory();
 }
 $('#tab-login').onclick = () => { $('#login-form').hidden = false; $('#register-form').hidden = true; $('#tab-login').classList.add('active'); $('#tab-register').classList.remove('active'); notice(); };
 $('#tab-register').onclick = () => { $('#login-form').hidden = true; $('#register-form').hidden = false; $('#tab-login').classList.remove('active'); $('#tab-register').classList.add('active'); notice(); };
@@ -271,8 +527,43 @@ $('#suggest-avatar').onclick = () => run(async () => {
 $('#character-form').onsubmit = event => { event.preventDefault(); const data = new FormData(event.target), body = Object.fromEntries(data); body.habilidades_ids = data.getAll('habilidades_ids'); if (!body.raca_id) delete body.raca_id; if (body.habilidades_ids.length !== state.catalog.regras.habilidades_por_personagem) { notice(`Escolha exatamente ${state.catalog.regras.habilidades_por_personagem} habilidades.`, true); return; } run(async () => { await api(`/salas/${state.room.id}/personagem`, body); await refreshRoom(); notice('Personagem salvo. Confirme quando estiver pronto.'); }); };
 $('#ready').onclick = () => run(async () => { const me = state.room.membros.find(m => m.usuario_id === state.user.id); const { sala } = await api(`/salas/${state.room.id}/pronto`, { pronto: !me.pronto }); applyRoom(sala); renderRoom(); });
 $('#start-game').onclick = () => run(async () => { const { sala } = await api(`/salas/${state.room.id}/iniciar`, {}); applyRoom(sala); renderRoom(); });
-$('#action-form').onsubmit = event => { event.preventDefault(); run(() => sendAction($('#action-input').value.trim()), 'O mestre está preparando a narração…'); };
+for (const [valor, rotulo] of Object.entries(nomesAtributos)) {
+    $('#action-attribute').add(new Option(rotulo, valor, valor === 'inteligencia'));
+}
+for (const controle of document.querySelectorAll('[data-action-mode]')) {
+    controle.onclick = () => selecionarModoAcao(controle.dataset.actionMode);
+}
+$('#action-form').onsubmit = event => {
+    event.preventDefault();
+    const acao = lerAcaoFormulario();
+    if (!acao || acao.length > 1000) {
+        notice(acao ? 'A ação ficou longa demais. Encurte a descrição.' : 'Escreva o que seu personagem vai fazer.', true);
+        return;
+    }
+    run(() => sendAction(acao, true), 'O mestre está preparando a narração…');
+};
 $('#observe').onclick = () => run(() => sendAction('/observar'), 'Observando o ambiente…');
-for (const [selector, route] of [['#retry','repetir'], ['#discard','descartar']]) $(selector).onclick = () => run(async () => { const pending = state.campaign.pendente; const { campanha } = await api(`/salas/${state.room.id}/${route}`, { pedido_id: pending.id }); if ($('#action-input').value.trim() === pending.acao) $('#action-form').reset(); applyCampaign(campanha); renderRoom(); await loadHistory(); }, route === 'repetir' ? 'Retomando a cena pendente…' : 'Descartando a ação…');
+for (const [selector, route] of [['#retry','repetir'], ['#discard','descartar']]) $(selector).onclick = () => run(async () => {
+    const pending = state.campaign.pendente;
+    const generation = state.generation;
+    let resposta;
+    try {
+        resposta = await ack('sala:' + route, { sala_id: state.room.id, pedido_id: pending.id }, PRAZO_ACAO_MS);
+    } catch (erro) {
+        if (erro.code !== 'CONFIRMACAO_INDISPONIVEL' || generation !== state.generation) throw erro;
+        await recuperarConfirmacao();
+        return;
+    }
+    if (generation !== state.generation) return;
+    if (lerAcaoFormulario() === pending.acao) resetarFormularioAcao();
+    applyCampaign(resposta.campanha); renderRoom(); await loadHistory();
+}, route === 'repetir' ? 'Retomando a cena pendente…' : 'Descartando a ação…');
 $('#older-history').onclick = () => run(() => loadHistory(true));
+$('#history').onscroll = updateHistoryNavigation;
+$('#latest-history').onclick = () => {
+    const history = $('#history');
+    history.scrollTop = history.scrollHeight;
+    history.focus({ preventScroll: true });
+    updateHistoryNavigation();
+};
 run(async () => { try { const { usuario } = await api('/autenticacao/sessao'); await enterUser(usuario); } catch (error) { expireSession(); if (error.status !== 401) throw error; } });

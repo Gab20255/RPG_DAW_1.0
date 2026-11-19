@@ -16,7 +16,7 @@ const { criarGeracao, gerarMundoComAgentes } = require('./geracaoMundoService');
 const { prepararContextoAgente } = require('./contextoAgentesService');
 const { criarPromptSelecaoBase, criarEsquemaSelecaoBase } = require('../prompts/selecaoBasePrompt');
 const { PROMPT_ADAPTACAO_BASE, criarEsquemaAdaptacaoBase } = require('../prompts/adaptacaoBasePrompt');
-const { PROMPT_CAMPANHA, ESQUEMA_CAMPANHA } = require('../prompts/campanhaPrompt');
+const { PROMPT_CAMPANHA, criarEsquemaCampanha } = require('../prompts/campanhaPrompt');
 const { LIMITE_CONTEXTO } = require('../rules/narrativa');
 
 const SYSTEM_PROMPT = MESTRE_PROMPT;
@@ -158,13 +158,17 @@ class GeminiService {
     async continuarCampanha(contexto) {
         const mensagem = JSON.stringify(contexto);
         if (mensagem.length > LIMITE_CONTEXTO || !contexto.pedido?.id) throw new Error('Contexto narrativo inválido.');
-        const opcoes = { systemPrompt: PROMPT_CAMPANHA, schema: ESQUEMA_CAMPANHA,
+        const opcoes = { systemPrompt: PROMPT_CAMPANHA, schema: criarEsquemaCampanha(contexto.direcao_definida),
             json: true, maxTokens: this.limiteMestre, temperatura: 0.75, usarHistorico: false,
             operacao: 'campanha', maximoTentativas: 1, prazoMs: 60000 };
         const texto = this.provider === 'openrouter'
             ? await this._enviarOpenRouter(mensagem, 1, opcoes)
             : await this._enviarGemini(mensagem, 1, opcoes);
-        try { return JSON.parse(texto.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')); }
+        try {
+            const narracao = JSON.parse(texto.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+            const { id, turno, ambiente_id } = contexto.pedido;
+            return { ...narracao, pedido_id: id, turno, ambiente_id };
+        }
         catch { const erro = new Error('Resposta narrativa inválida. A cena permanece pendente.'); erro.code = 'CENA_INVALIDA'; throw erro; }
     }
 

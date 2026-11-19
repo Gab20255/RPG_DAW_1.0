@@ -31,6 +31,10 @@ function criarAplicacao({ banco, criarServico, rolar, autenticacao, limitador = 
     aplicacao.use(express.json({ limit: '128kb', strict: true }));
 
     aplicacao.use(express.static(caminhos.resolve(__dirname, '../../public'), { dotfiles: 'deny' }));
+    for (const pasta of ['js', 'css']) {
+        const diretorio = caminhos.resolve(__dirname, '../../Dado', pasta);
+        aplicacao.use(`/dado/${pasta}`, express.static(diretorio, { dotfiles: 'deny', index: false, redirect: false }));
+    }
     aplicacao.get('/api/saude', (requisicao, resposta) => resposta.json({ estado: 'ativo' }));
     aplicacao.get('/api/bases', (requisicao, resposta) => resposta.json({ bases: api.listarBases() }));
     aplicacao.get('/avatares/v1/:id.svg', (requisicao, resposta) => {

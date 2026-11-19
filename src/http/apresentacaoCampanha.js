@@ -10,6 +10,18 @@ function apresentarCena(cena) {
     return cena ? { ...selecionar(['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'participante_id', 'personagem_id', 'teste', 'narracao', 'resumo', 'exige_resolucao_mecanica'], cena), resultado: apresentarResultadoMecanico(cena.resultado) } : null;
 }
 
+function apresentarUltimaRolagem(campanha) {
+    const temRolagem = cena => cena?.teste || cena?.resultado?.rolagens.length > 0;
+    const cena = temRolagem(campanha.pendente) ? campanha.pendente : campanha.diario.findLast(temRolagem);
+    if (!cena) return null;
+    const rolagens = cena.teste ? [cena.teste] : cena.resultado.rolagens;
+    return {
+        cena_id: cena.id,
+        turno: cena.turno,
+        rolagens: rolagens.map(rolagem => selecionar(['d20', 'bonus', 'total', 'dificuldade', 'sucesso'], rolagem)),
+    };
+}
+
 function apresentarFicha(ficha) {
     return selecionar(['id', 'nome', 'classe_id', 'classe', 'raca_id', 'raca', 'descricao_visual', 'avatar_id', 'avatar_url', 'nivel', 'vida', 'vida_max', 'energia', 'energia_max', 'atributos', 'habilidades', 'versao_regras'], ficha);
 }
@@ -35,6 +47,11 @@ function apresentarCampanha(mundo) {
         criaturas: ['id', 'nome', 'descricao', 'comportamento', 'ameaca', 'ambientes_ids'],
         missoes: ['id', 'titulo', 'tipo', 'descricao', 'objetivo', 'ambientes_ids', 'personagens_ids', 'recompensas'],
     };
+    const colecoesPublicas = Object.fromEntries(Object.entries(colecoes).map(([colecao, campos]) =>
+        [colecao, atual[colecao].map(item => selecionar(campos, item))]));
+    for (const ambiente of colecoesPublicas.ambientes) {
+        ambiente.imagem_url = mundo.imagensCenarios?.get(ambiente.id) ?? null;
+    }
     return {
         ...resumirCampanha(mundo),
         versao: campanha.versao, revisao: mundo.revisaoPersistencia ?? null, mundo_hash: hashBaseCampanha(mundo),
@@ -49,10 +66,11 @@ function apresentarCampanha(mundo) {
         }),
         mecanica: { encontro: mecanica.encontro, combatentes: mecanica.combatentes.filter(item => item.ambiente_id === campanha.ambiente_id) },
         pendente: apresentarCena(campanha.pendente), ultima_cena: apresentarCena(campanha.diario.at(-1)), desfecho: campanha.desfecho,
+        ultima_rolagem: apresentarUltimaRolagem(campanha),
         preparacao: { selecao: mundo.origem?.selecao || null, adaptacao: mundo.preparacao?.adaptacao || null },
         mundo: {
             ...selecionar(['nome', 'tema', 'tom', 'descricao', 'regras_do_universo', 'ambiente_inicial_id'], atual.mundo),
-            ...Object.fromEntries(Object.entries(colecoes).map(([colecao, campos]) => [colecao, atual[colecao].map(item => selecionar(campos, item))])),
+            ...colecoesPublicas,
         },
     };
 }

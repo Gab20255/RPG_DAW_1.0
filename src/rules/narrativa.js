@@ -32,8 +32,8 @@ function validarDirecao(direcao) {
 }
 
 const MODELO_DIRECAO = { conflito: '', objetivo: '', gancho: '', desfechos_possiveis: [''] };
-const MODELO_CENA = {
-    pedido_id: '', turno: 1, ambiente_id: '', narracao: '', resumo: '',
+const MODELO_NARRACAO = {
+    narracao: '', resumo: '',
     direcao: [MODELO_DIRECAO], fatos: [''], pistas: [''], acontecimentos: [''],
     objetivos: [{ id: '', estado: '', motivo: '' }],
     novidades: {
@@ -46,6 +46,7 @@ const MODELO_CENA = {
     exige_resolucao_mecanica: false,
     encerramento: { concluir: false, desfecho: '' },
 };
+const MODELO_CENA = { pedido_id: '', turno: 1, ambiente_id: '', ...MODELO_NARRACAO };
 
 function criarEsquema(valor) {
     if (Array.isArray(valor)) return { type: 'array', items: criarEsquema(valor[0]) };
@@ -53,4 +54,4 @@ function criarEsquema(valor) {
     return { type: typeof valor === 'number' ? 'integer' : typeof valor };
 }
 
-module.exports = { LIMITE_CONTEXTO, MODELO_CENA, MODELO_DIRECAO, conferirCampos, conferirTexto, conferirLista, chaveTexto, identificadorTexto, validarDirecao, criarEsquema };
+module.exports = { LIMITE_CONTEXTO, MODELO_CENA, MODELO_NARRACAO, MODELO_DIRECAO, conferirCampos, conferirTexto, conferirLista, chaveTexto, identificadorTexto, validarDirecao, criarEsquema };

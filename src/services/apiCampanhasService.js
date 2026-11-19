@@ -57,7 +57,7 @@ class ApiCampanhas {
             let revisao;
             const condutor = new CondutorCampanha({
                 carregar: async () => { const mundo = await this.repositorio.carregar(id); revisao = mundo.revisaoPersistencia; return { mundo, campanha: mundo.campanha }; },
-                salvar: async campanha => { const mundo = await this.repositorio.salvar(id, campanha, { revisao }); revisao = mundo.revisaoPersistencia; return mundo; },
+                salvar: async (campanha, cenaId) => { const mundo = await this.repositorio.salvar(id, campanha, { revisao, cenaId }); revisao = mundo.revisaoPersistencia; return mundo; },
                 consultar: contexto => this.consultar(contexto), rolar: this.rolar,
             });
             this.sessoes.set(id, { condutor, fila: Promise.resolve() });
@@ -102,16 +102,25 @@ class ApiCampanhas {
     }
 
     async agir(id, corpo) {
-        validarCorpo(corpo, ['acao', 'turno_esperado'], ['participante_id']);
+        validarCorpo(corpo, ['acao', 'turno_esperado'], ['participante_id', 'acao_id']);
         if (typeof corpo.acao !== 'string' || !corpo.acao.trim() || corpo.acao.length > 1000 || !Number.isSafeInteger(corpo.turno_esperado) || corpo.turno_esperado < 0) throw new ErroAplicacao(400, 'ACAO_INVALIDA', 'Ação ou turno esperado inválido.');
-        if (['/repetir', '/descartar'].includes(corpo.acao.trim())) throw new ErroAplicacao(400, 'ROTA_INCOMPATIVEL', 'Use a rota específica para repetir ou descartar uma cena.');
+        const acao = corpo.acao.trim();
+        const { acao_id: cenaId, turno_esperado: turnoEsperado, participante_id: participanteId = null } = corpo;
+        if (cenaId !== undefined && (typeof cenaId !== 'string' || !/^acao_[a-f0-9]{32}$/.test(cenaId) || !this.repositorio.obterPedidoAcao)) throw new ErroAplicacao(400, 'ID_ACAO_INVALIDO', 'Identificador da ação inválido.');
+        if (['/repetir', '/descartar'].includes(acao)) throw new ErroAplicacao(400, 'ROTA_INCOMPATIVEL', 'Use a rota específica para repetir ou descartar uma cena.');
         return this.alterar(id, async (condutor, mundo) => {
             const campanha = mundo.campanha;
-            if (campanha.turno !== corpo.turno_esperado) throw new ErroAplicacao(409, 'TURNO_DESATUALIZADO', 'O turno mudou; consulte o estado atual da campanha.');
+            const anterior = cenaId && this.repositorio.obterPedidoAcao(id, cenaId);
+            if (anterior) {
+                if (anterior.participante_id !== participanteId || anterior.turno - 1 !== turnoEsperado || anterior.acao !== acao) throw new ErroAplicacao(409, 'PEDIDO_INCOMPATIVEL', 'O identificador já foi usado em outro pedido.');
+                if (campanha.pendente?.id === cenaId || campanha.diario[turnoEsperado]?.id === cenaId) return apresentarCampanha(mundo);
+                throw new ErroAplicacao(409, 'PEDIDO_DESCARTADO', 'Este pedido foi descartado. Envie uma nova ação para continuar.');
+            }
+            if (campanha.turno !== turnoEsperado) throw new ErroAplicacao(409, 'TURNO_DESATUALIZADO', 'O turno mudou; consulte o estado atual da campanha.');
             if (campanha.pendente) throw new ErroAplicacao(409, 'CENA_PENDENTE', 'Há uma cena pendente de conclusão.');
             if (campanha.estado === 'concluida') throw new ErroAplicacao(409, 'CAMPANHA_CONCLUIDA', 'Campanha concluída.');
-            validarAutor(campanha, corpo.participante_id ?? null);
-            await condutor.executar(corpo.acao.trim(), { participanteId: corpo.participante_id ?? null });
+            validarAutor(campanha, participanteId);
+            await condutor.executar(acao, { participanteId, cenaId });
             return this.carregar(id);
         });
     }

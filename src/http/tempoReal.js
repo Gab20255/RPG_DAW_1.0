@@ -5,8 +5,8 @@ const { ErroAplicacao } = require('../services/erroAplicacao');
 const { apresentarCampanha } = require('./apresentacaoCampanha');
 
 function erroPublico(erro) {
-    return erro instanceof ErroAplicacao ? { codigo: erro.codigo, mensagem: erro.message, ...(erro.detalhes ? { detalhes: erro.detalhes } : {}) }
-        : { codigo: 'FALHA_INTERNA', mensagem: 'Não foi possível concluir a operação.' };
+    return erro instanceof ErroAplicacao ? { codigo: erro.codigo, status: erro.status, mensagem: erro.message, ...(erro.detalhes ? { detalhes: erro.detalhes } : {}) }
+        : { codigo: 'FALHA_INTERNA', status: 500, mensagem: 'Não foi possível concluir a operação.' };
 }
 
 function conectarTempoReal(servidor, { autenticacao, salas, api, limitador }) {
@@ -68,9 +68,13 @@ function conectarTempoReal(servidor, { autenticacao, salas, api, limitador }) {
             validarCampos(corpo, ['sala_id']);
             return { sala: await salas.iniciar(corpo.sala_id, {}, socket.data.sessao) };
         });
-        for (const [evento, metodo, campos] of [['sala:acao', 'agir', ['acao', 'turno_esperado']], ['sala:repetir', 'repetir', ['pedido_id']], ['sala:descartar', 'descartar', ['pedido_id']]]) {
+        for (const [evento, metodo, campos, opcionais = []] of [
+            ['sala:acao', 'agir', ['acao', 'turno_esperado'], ['acao_id']],
+            ['sala:repetir', 'repetir', ['pedido_id']],
+            ['sala:descartar', 'descartar', ['pedido_id']],
+        ]) {
             registrar(evento, async corpo => {
-                validarCampos(corpo, ['sala_id', ...campos], ['participante_id']);
+                validarCampos(corpo, ['sala_id', ...campos], ['participante_id', ...opcionais]);
                 const { sala_id, ...pedido } = corpo;
                 const resultado = await salas[metodo](sala_id, pedido, socket.data.sessao);
                 return metodo === 'repetir' ? resultado : { campanha: resultado };
