@@ -17,6 +17,12 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
+  <div id="world-loading" class="world-loading" role="status" aria-live="polite" hidden>
+    <span class="loading-orbit" aria-hidden="true">◇</span>
+    <h2>Uma aventura começa</h2>
+    <p id="world-loading-title"></p>
+    <span class="loading-dots" aria-hidden="true">•••</span>
+  </div>
   <header class="topbar"><a class="brand" href="#" id="home"><span class="brand-mark">◇</span> ENTRE MUNDOS <small>RPG COOPERATIVO</small></a><div class="account"><span id="connection" role="status">Conectando…</span><span id="username"></span><button id="logout" class="quiet" hidden>Sair</button></div></header>
   <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
   <main>
@@ -103,14 +109,20 @@
                 </div>
                 <div id="history" role="log" aria-labelledby="journal-title" aria-live="polite" aria-relevant="additions" tabindex="0"></div>
                 <button id="latest-history" class="quiet" type="button" hidden>Ir para a última cena ↓</button>
+                <section id="live-scene" class="live-scene" aria-label="Narração em andamento" hidden>
+                  <div class="scene-loading"><span class="loading-orbit" aria-hidden="true">◇</span><span id="live-title">O Mestre prepara a cena</span><span class="loading-dots" aria-hidden="true">•••</span></div>
+                  <p id="live-text" class="prose"></p>
+                </section>
                 <div id="pending" class="pending" hidden>
                   <p id="pending-text"></p>
                   <div class="actions"><button id="retry">Tentar novamente</button><button id="discard" class="quiet">Descartar ação</button></div>
                 </div>
                 <p id="ending" class="prose" hidden></p>
                 <form id="action-form" tabindex="-1" data-mode="livre">
+                  <h3>Seu próximo passo</h3>
+                  <div id="story-choices" class="story-choices" role="group" aria-label="Escolhas da história"></div>
                   <div class="action-modes" role="group" aria-label="Tipo de ação">
-                    <button type="button" data-action-mode="livre" class="quiet" aria-pressed="true">Ação livre</button>
+                    <button type="button" data-action-mode="livre" class="quiet" aria-pressed="true">Complementar</button>
                     <button type="button" data-action-mode="falar" class="quiet" aria-pressed="false">Falar</button>
                     <button type="button" data-action-mode="teste" class="quiet" aria-pressed="false">Teste D20</button>
                   </div>
@@ -119,7 +131,7 @@
                     <select id="action-attribute"></select>
                   </div>
                   <label id="action-label" for="action-input">O que você faz?</label>
-                  <textarea id="action-input" name="acao" required maxlength="1000" rows="3" placeholder="Descreva uma ação ou fale com alguém…"></textarea>
+                  <textarea id="action-input" name="acao" maxlength="500" rows="2" placeholder="Um detalhe da sua abordagem (opcional)…"></textarea>
                   <div class="actions">
                     <div class="explore-actions">
                       <button id="observe" type="button" class="quiet">Observar</button>

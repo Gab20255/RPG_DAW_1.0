@@ -6,6 +6,7 @@ const ServicoModelo = require('./geminiService');
 const { obterConfiguracao } = require('./configuracaoService');
 const { ErroAplicacao } = require('./erroAplicacao');
 const { apresentarCampanha, resumirCampanha, apresentarCena } = require('../http/apresentacaoCampanha');
+const { EventEmitter } = require('node:events');
 
 function validarCorpo(corpo, obrigatorios, opcionais = []) {
     if (!corpo || typeof corpo !== 'object' || Array.isArray(corpo) || obrigatorios.some(campo => !Object.hasOwn(corpo, campo)) || Object.keys(corpo).some(campo => ![...obrigatorios, ...opcionais].includes(campo))) throw new ErroAplicacao(400, 'CORPO_INVALIDO', 'Campos da requisição inválidos.');
@@ -24,8 +25,9 @@ function tratarErro(erro) {
     return new ErroAplicacao(422, 'OPERACAO_INVALIDA', erro.message);
 }
 
-class ApiCampanhas {
+class ApiCampanhas extends EventEmitter {
     constructor({ repositorio = new RepositorioCampanhas(), criarServico = () => new ServicoModelo(obterConfiguracao()), rolar } = {}) {
+        super();
         this.repositorio = repositorio;
         this.criarServico = criarServico;
         this.rolar = rolar;
@@ -39,7 +41,12 @@ class ApiCampanhas {
     }
 
     async consultar(contexto) {
-        try { return await this.obterServico().continuarCampanha(contexto); }
+        try {
+            this.emit('narracao', { campanha_id: contexto.campanha_id, cena_id: contexto.pedido.id, texto: '' });
+            return await this.obterServico().continuarCampanha(contexto, texto => {
+                this.emit('narracao', { campanha_id: contexto.campanha_id, cena_id: contexto.pedido.id, texto });
+            });
+        }
         catch (erro) {
             if (erro instanceof ErroAplicacao) throw erro;
             if (erro.status === 429) throw new ErroAplicacao(429, 'LIMITE_IA', 'Limite de requisições da IA atingido.');
@@ -72,6 +79,7 @@ class ApiCampanhas {
             catch (erro) {
                 const publico = tratarErro(erro);
                 const mundo = await this.repositorio.carregar(id).catch(() => null);
+                if (mundo?.campanha.pendente) this.emit('narracao', { campanha_id: id, cena_id: mundo.campanha.pendente.id, erro: true, texto: '' });
                 publico.detalhes = { campanha_id: id, ...(mundo ? { turno: mundo.campanha.turno, pendente: apresentarCena(mundo.campanha.pendente) } : {}) };
                 throw publico;
             }

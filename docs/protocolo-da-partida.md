@@ -37,6 +37,10 @@ O navegador gera `acao_id` no formato `acao_` seguido de 32 caracteres hexadecim
 
 O acknowledgement contém `ok: true` e o resultado ou `ok: false` e `erro`, com `codigo`, `status` e `mensagem`. O servidor publica `sala:atualizada` para mudanças do lobby e `campanha:atualizada` para o estado da aventura. `sessao:encerrada` informa expiração ou revogação.
 
+Durante a geração, `campanha:narracao` transmite `sala_id`, `campanha_id`, `cena_id` e o `texto` acumulado da narração. A interface apresenta esses trechos enquanto a resposta completa é validada. Em caso de falha, o evento recebe `erro: true` e a interface oferece a recuperação da cena pendente. A publicação definitiva continua sendo feita por `campanha:atualizada`.
+
+As cenas podem incluir até três `escolhas`, cada uma com `rotulo` e `acao`. Elas são persistidas no diário e reapresentadas ao reconectar. O jogador seleciona uma opção e pode complementar diálogos e investigações. A abertura e cenas antigas recebem opções locais com base nos NPCs e conexões disponíveis. Os resultados mecânicos continuam sendo validados ao executar cada ação.
+
 ## Falhas e recuperação
 
 | Situação | Resposta |

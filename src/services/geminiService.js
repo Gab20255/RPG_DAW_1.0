@@ -18,6 +18,7 @@ const { criarPromptSelecaoBase, criarEsquemaSelecaoBase } = require('../prompts/
 const { PROMPT_ADAPTACAO_BASE, criarEsquemaAdaptacaoBase } = require('../prompts/adaptacaoBasePrompt');
 const { PROMPT_CAMPANHA, criarEsquemaCampanha } = require('../prompts/campanhaPrompt');
 const { LIMITE_CONTEXTO } = require('../rules/narrativa');
+const { lerNarracaoParcial, lerStreamOpenRouter } = require('./streamNarrativaService');
 
 const SYSTEM_PROMPT = MESTRE_PROMPT;
 
@@ -155,10 +156,19 @@ class GeminiService {
         }
     }
 
-    async continuarCampanha(contexto) {
+    async continuarCampanha(contexto, aoTrecho) {
         const mensagem = JSON.stringify(contexto);
         if (mensagem.length > LIMITE_CONTEXTO || !contexto.pedido?.id) throw new Error('Contexto narrativo inválido.');
-        const opcoes = { systemPrompt: PROMPT_CAMPANHA, schema: criarEsquemaCampanha(contexto.direcao_definida),
+        let ultimaNarracao = '', ultimoEnvio = 0;
+        const aoTexto = aoTrecho && (texto => {
+            const narracao = lerNarracaoParcial(texto);
+            if (narracao && narracao !== ultimaNarracao && Date.now() - ultimoEnvio >= 60) {
+                ultimaNarracao = narracao;
+                ultimoEnvio = Date.now();
+                aoTrecho(narracao);
+            }
+        });
+        const opcoes = { systemPrompt: PROMPT_CAMPANHA, schema: criarEsquemaCampanha(contexto.direcao_definida), aoTexto,
             json: true, maxTokens: this.limiteMestre, temperatura: 0.75, usarHistorico: false,
             operacao: 'campanha', maximoTentativas: 1, prazoMs: 60000 };
         const texto = this.provider === 'openrouter'
@@ -248,6 +258,7 @@ class GeminiService {
                         temperature: opcoes.temperatura ?? (opcoes.json ? 0.4 : 0.9),
                         top_p: 0.95,
                         max_tokens: opcoes.maxTokens || 1200,
+                        ...(opcoes.aoTexto ? { stream: true } : {}),
                         ...(opcoes.json ? {
                             response_format: usarSchema
                                 ? { type: 'json_schema', json_schema: { name: 'mundo_rpg', strict: true, schema: opcoes.schema } }
@@ -295,7 +306,7 @@ class GeminiService {
                     throw error;
                 }
 
-                const data = await response.json();
+                const data = opcoes.aoTexto ? await lerStreamOpenRouter(response.body, opcoes.aoTexto) : await response.json();
                 opcoes.aoConsumo?.({ id: data.id || null, modelo: data.model || this.modelName,
                     agente: opcoes.agente, tokens_entrada: data.usage?.prompt_tokens ?? null,
                     tokens_saida: data.usage?.completion_tokens ?? null,
@@ -354,7 +365,7 @@ class GeminiService {
 
         for (let tentativa = 1; tentativa <= maximoTentativas; tentativa++) {
             try {
-                const response = await this.ai.models.generateContent({
+                const pedido = {
                     model: this.modelName,
                     contents: contents,
                     config: {
@@ -367,7 +378,19 @@ class GeminiService {
                         maxOutputTokens: opcoes.maxTokens || 2048,
                         ...(opcoes.json ? { responseMimeType: 'application/json' } : {}),
                     }
-                });
+                };
+                let response;
+                if (opcoes.aoTexto) {
+                    const stream = await this.ai.models.generateContentStream(pedido);
+                    let texto = '';
+                    for await (const parte of stream) {
+                        texto += parte.text || '';
+                        if (texto.length > 128000) throw new Error('Resposta narrativa excedeu o limite.');
+                        opcoes.aoTexto(texto);
+                        response = { text: texto, candidates: parte.candidates, usageMetadata: parte.usageMetadata };
+                    }
+                    if (!response?.candidates?.[0]?.finishReason) throw new Error('Narração interrompida antes da conclusão.');
+                } else response = await this.ai.models.generateContent(pedido);
 
                 if (opcoes.json) {
                     this._validarRespostaMundo({

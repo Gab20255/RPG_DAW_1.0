@@ -30,6 +30,11 @@ function conectarTempoReal(servidor, { autenticacao, salas, api, limitador }) {
 
     const campanhaAlterada = ({ sala_id, mundo }) => publicar(sala_id, 'campanha:atualizada', { sala_id, campanha: apresentarCampanha(mundo) });
     const salaAlterada = sala => publicar(sala.id, 'sala:atualizada', { sala });
+    const narracao = trecho => {
+        const registro = salas.banco.obter('SELECT sala_id FROM salas_campanhas WHERE campanha_id = ?', trecho.campanha_id);
+        if (registro) publicar(registro.sala_id, 'campanha:narracao', { sala_id: registro.sala_id, ...trecho });
+    };
+    api.on('narracao', narracao);
     const revogada = hash => {
         for (const socket of io.sockets.sockets.values()) if (socket.data.sessao.token_hash === hash) { socket.emit('sessao:encerrada'); socket.disconnect(true); }
     };
@@ -83,6 +88,7 @@ function conectarTempoReal(servidor, { autenticacao, salas, api, limitador }) {
     });
 
     servidor.once('close', () => {
+        api.off('narracao', narracao);
         api.repositorio.off('alterada', campanhaAlterada);
         salas.off('alterada', salaAlterada);
         autenticacao.off('revogada', revogada);
