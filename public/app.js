@@ -8,16 +8,20 @@ const nomesAtributos = {
     carisma: 'Carisma', constituicao: 'Constituição', sabedoria: 'Sabedoria',
 };
 const modosAcao = {
-    livre: { rotulo: 'O que você faz?', dica: 'Descreva uma ação ou fale com alguém…', botao: 'Enviar ação →' },
+    livre: { rotulo: 'O que você faz?', dica: 'Um detalhe da sua abordagem (opcional)…', botao: 'Enviar ação →' },
     falar: { rotulo: 'O que você diz?', dica: 'Ex.: Pergunto à estalajadeira o que ela viu.', botao: 'Enviar fala →' },
     teste: { rotulo: 'O que você tenta fazer?', dica: 'Ex.: Examinar os símbolos na porta.', botao: 'Fazer teste →' },
 };
 const PRAZO_ACAO_MS = 90000;
 let envioSemConfirmacao = null;
+let narracaoEmCurso = null;
+let escolhaAtual = null;
+let turnoEscolhas = '';
 let bandejaD20;
 let geracaoBandeja;
 function notice(message = '', error = false) { $('#notice').textContent = message; $('#notice').hidden = !message; $('#notice').classList.toggle('error', error); }
 function show(screen) {
+    if (screen !== 'room') narracaoEmCurso = null;
     if (screen !== 'room') {
         bandejaD20?.encerrar();
         bandejaD20 = undefined;
@@ -61,7 +65,7 @@ function lockControls() {
     const mine = campaign?.pendente?.participante_id === `usuario_${state.user?.id}`;
     $('#retry').disabled = state.busy || !state.synced || !state.socket?.connected || !mine || !room?.ativa;
     $('#discard').disabled = $('#retry').disabled || !!campaign?.pendente?.teste || !!campaign?.pendente?.resultado;
-    if (campaign) $('#action-help').textContent = !room?.ativa ? 'Esta sala foi encerrada.' : campaign.estado === 'concluida' ? 'Esta aventura foi concluída.' : !state.synced || !state.socket?.connected ? 'Sincronizando a mesa. O envio volta assim que a sala estiver atualizada.' : campaign.pendente ? 'Aguarde a conclusão da cena pendente.' : 'As ações e os resultados são compartilhados com todo o grupo.';
+    if (campaign) $('#action-help').textContent = !room?.ativa ? 'Sala encerrada.' : campaign.estado === 'concluida' ? 'Aventura concluída.' : !state.synced || !state.socket?.connected ? 'Reconectando à mesa…' : '';
 }
 function applyRoom(room) { if (state.room?.id === room.id && room.revisao_preparacao < state.room.revisao_preparacao) return; state.room = room; }
 function applyCampaign(campaign) { if (state.campaign?.id === campaign.id && campaign.revisao < state.campaign.revisao) return; state.campaign = campaign; }
@@ -78,6 +82,11 @@ function connect() {
     socket.on('sessao:encerrada', () => { expireSession(); notice('Sua sessão terminou. Entre novamente.', true); });
     socket.on('sala:atualizada', ({ sala }) => { if (sala.id !== state.room?.id) return; applyRoom(sala); renderRoom(); });
     socket.on('campanha:atualizada', ({ sala_id, campanha }) => { if (sala_id !== state.room?.id) return; applyCampaign(campanha); renderRoom({ animarDado: state.synced }); loadHistory().catch(error => notice(error.message, true)); });
+    socket.on('campanha:narracao', trecho => {
+        if (trecho.sala_id !== state.room?.id || trecho.cena_id !== state.campaign?.pendente?.id) return;
+        narracaoEmCurso = trecho;
+        renderNarracao();
+    });
     socket.connect();
 }
 async function ack(event, body, prazo = 15000) {
@@ -331,7 +340,52 @@ function renderRoom({ animarDado = false } = {}) {
     $('#pending-text').textContent = campanha.pendente ? `Cena pendente: ${campanha.pendente.acao}. ${mine ? 'Se a narração falhar, tente novamente sem repetir a rolagem.' : 'Aguardando a narração ou a recuperação pelo autor da ação.'}` : '';
     $('#retry').hidden = !mine; $('#discard').hidden = !mine || !!campanha.pendente?.teste || !!campanha.pendente?.resultado;
     $('#ending').hidden = !campanha.desfecho; $('#ending').textContent = campanha.desfecho || '';
-    renderHistory(); lockControls();
+    renderHistory(); renderEscolhas(); renderNarracao(); lockControls();
+}
+function renderNarracao() {
+    const pendente = state.campaign?.pendente;
+    if (!pendente) narracaoEmCurso = null;
+    const trecho = narracaoEmCurso?.cena_id === pendente?.id ? narracaoEmCurso : null;
+    const ativa = !!pendente && !!trecho && !trecho.erro;
+    $('#live-scene').hidden = !ativa;
+    $('#live-text').textContent = ativa ? trecho.texto : '';
+    $('#live-title').textContent = trecho?.texto ? 'O Mestre narra' : 'O Mestre prepara a cena';
+    $('#pending').hidden = !pendente || ativa;
+}
+function renderEscolhas() {
+    const campanha = state.campaign;
+    const chave = campanha.id + ':' + campanha.turno;
+    if (turnoEscolhas === chave) return;
+    turnoEscolhas = chave;
+    if (escolhaAtual) selecionarModoAcao('livre');
+    escolhaAtual = null;
+    const target = $('#story-choices');
+    target.replaceChildren();
+    if (campanha.estado === 'concluida') return;
+    const local = campanha.mundo.ambientes.find(item => item.id === campanha.ambiente_id);
+    const npc = campanha.mundo.personagens.find(item => item.ambiente_id === campanha.ambiente_id);
+    const destino = campanha.mundo.ambientes.find(item => item.id === local?.conexoes_ids[0]);
+    const iniciais = [
+        { rotulo: 'Investigar o local', acao: '/teste inteligencia Procuro pistas sobre o objetivo da aventura em ' + local.nome },
+        { rotulo: npc ? 'Conversar com ' + npc.nome : 'Examinar os arredores', acao: npc ? '/falar Pergunto a ' + npc.nome + ' como podemos avançar no objetivo da aventura.' : '/observar' },
+        ...(destino ? [{ rotulo: 'Seguir para ' + destino.nome, acao: '/ir ' + destino.id }] : []),
+    ];
+    const escolhas = campanha.ultima_cena?.escolhas?.length ? campanha.ultima_cena.escolhas : iniciais;
+    for (const escolha of escolhas) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = escolha.rotulo;
+        button.setAttribute('aria-pressed', 'false');
+        button.onclick = () => {
+            selecionarModoAcao('livre');
+            escolhaAtual = escolha;
+            for (const outro of target.children) outro.setAttribute('aria-pressed', String(outro === button));
+            $('#action-input').hidden = /^\/(ir|observar|atacar|usar|defender|mover|aproximar|esperar|descansar|fugir|preparar)(?:\s|$)/.test(escolha.acao);
+            $('#action-label').hidden = $('#action-input').hidden;
+            $('#action-submit').textContent = 'Continuar →';
+        };
+        target.append(button);
+    }
 }
 async function loadHistory(older = false) {
     const roomId = state.room?.id; if (!roomId) return;
@@ -415,6 +469,10 @@ function renderHistory({ preservePosition = false } = {}) {
     updateHistoryNavigation();
 }
 function selecionarModoAcao(modo) {
+    escolhaAtual = null;
+    for (const button of $('#story-choices').children) button.setAttribute('aria-pressed', 'false');
+    $('#action-input').hidden = false;
+    $('#action-label').hidden = false;
     const { rotulo, dica, botao } = modosAcao[modo];
     const formulario = $('#action-form');
     formulario.dataset.mode = modo;
@@ -432,11 +490,12 @@ function resetarFormularioAcao() {
 }
 function lerAcaoFormulario() {
     const texto = $('#action-input').value.trim();
+    if (escolhaAtual) return escolhaAtual.acao + (texto && !$('#action-input').hidden ? ' — ' + texto : '');
     if (!texto) return '';
     const modo = $('#action-form').dataset.mode;
     if (modo === 'falar') return '/falar ' + texto;
     if (modo === 'teste') return '/teste ' + $('#action-attribute').value + ' ' + texto;
-    return texto;
+    return texto.startsWith('/') ? texto : '';
 }
 function reconciliarEnvio() {
     const envio = envioSemConfirmacao;
@@ -491,7 +550,19 @@ $('#register-form').onsubmit = event => { event.preventDefault(); const body = O
 $('#logout').onclick = () => run(async () => { await api('/autenticacao/logout', {}); expireSession(); });
 $('#home').onclick = event => { event.preventDefault(); if (state.user) dashboard(); };
 $('#back').onclick = dashboard; $('#refresh-rooms').onclick = () => run(loadRooms);
-$('#create-room').onsubmit = event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); run(async () => { const { sala } = await api('/salas', body); await openRoom(sala.id); event.target.reset(); }, 'Preparando o mundo da sua aventura…'); };
+$('#create-room').onsubmit = event => {
+    event.preventDefault();
+    const body = Object.fromEntries(new FormData(event.target));
+    run(async () => {
+        $('#world-loading-title').textContent = body.titulo;
+        $('#world-loading').hidden = false;
+        try {
+            const { sala } = await api('/salas', body);
+            await openRoom(sala.id);
+            event.target.reset();
+        } finally { $('#world-loading').hidden = true; }
+    });
+};
 $('#join-room').onsubmit = event => { event.preventDefault(); const body = Object.fromEntries(new FormData(event.target)); run(async () => { const { sala } = await api('/salas/entrar', body); await openRoom(sala.id); event.target.reset(); }); };
 $('#copy-code').onclick = () => run(async () => { try { await navigator.clipboard.writeText(state.room.codigo); notice('Código copiado. Compartilhe com seu grupo.'); } catch { notice(`Código da sala: ${state.room.codigo}`); } });
 $('#class-select').onchange = updateClass;
@@ -537,10 +608,10 @@ $('#action-form').onsubmit = event => {
     event.preventDefault();
     const acao = lerAcaoFormulario();
     if (!acao || acao.length > 1000) {
-        notice(acao ? 'A ação ficou longa demais. Encurte a descrição.' : 'Escreva o que seu personagem vai fazer.', true);
+        notice(acao ? 'Encurte o complemento da ação.' : 'Escolha um próximo passo ou selecione Falar ou Teste D20.', true);
         return;
     }
-    run(() => sendAction(acao, true), 'O mestre está preparando a narração…');
+    run(() => sendAction(acao, true));
 };
 $('#observe').onclick = () => run(() => sendAction('/observar'), 'Observando o ambiente…');
 for (const [selector, route] of [['#retry','repetir'], ['#discard','descartar']]) $(selector).onclick = () => run(async () => {

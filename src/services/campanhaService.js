@@ -1,7 +1,7 @@
 const { randomUUID: criarIdentificador } = require('node:crypto');
 const { isDeepStrictEqual: saoIguais } = require('node:util');
 const { validarMundo } = require('../prompts/mundoPrompt');
-const { MODELO_CENA, conferirCampos, conferirTexto, conferirLista, chaveTexto, identificadorTexto, validarDirecao } = require('../rules/narrativa');
+const { MODELO_CENA, conferirCampos, conferirTexto, conferirLista, chaveTexto, identificadorTexto, validarDirecao, validarEscolhas } = require('../rules/narrativa');
 const { interpretarTeste, resolverTeste } = require('../rules/testes');
 const { prepararFichaCampanha, validarParticipantes, validarIdentificador, obterParticipante, conferirAutoria } = require('./participantesCampanhaService');
 const { iniciarMecanica, prepararEstadoMecanico, conferirOrigens, resolverAcaoMecanica, validarResultadoMecanico, idJogador } = require('./combateService');
@@ -97,7 +97,8 @@ function validarCampanha(campanha, mundo) {
     }
     if (!Array.isArray(campanha.diario) || campanha.diario.length !== campanha.turno || new Set(campanha.diario.map(item => item.id)).size !== campanha.diario.length) throw new Error('Diário inválido.');
     campanha.diario.forEach((cena, indice) => {
-        conferirCampos(cena, ['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'narracao', 'resumo', 'exige_resolucao_mecanica', ...(comFichas ? ['participante_id', 'personagem_id', 'teste'] : []), ...(comMecanica ? ['resultado'] : [])], 'Cena salva');
+        conferirCampos(cena, ['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'narracao', 'resumo', 'exige_resolucao_mecanica', ...(Object.hasOwn(cena, 'escolhas') ? ['escolhas'] : []), ...(comFichas ? ['participante_id', 'personagem_id', 'teste'] : []), ...(comMecanica ? ['resultado'] : [])], 'Cena salva');
+        if (cena.escolhas !== undefined) validarEscolhas(cena.escolhas);
         conferirTexto(cena.id, 80, 'ID da cena');
         conferirTexto(cena.acao, 1000, 'Ação');
         conferirTexto(cena.narracao, 4000, 'Narração');
@@ -206,7 +207,8 @@ function registrarAcaoCampanha(campanha, mundo, entrada, { participanteId = null
 }
 
 function validarRespostaCena(resposta, campanha, atual) {
-    conferirCampos(resposta, Object.keys(MODELO_CENA), 'Resposta do Mestre');
+    conferirCampos(resposta, Object.keys(MODELO_CENA).filter(campo => campo !== 'escolhas' || Object.hasOwn(resposta, campo)), 'Resposta do Mestre');
+    if (resposta.escolhas !== undefined) validarEscolhas(resposta.escolhas);
     const pendente = campanha.pendente;
     if (!pendente || resposta.pedido_id !== pendente.id || resposta.turno !== pendente.turno || resposta.ambiente_id !== pendente.ambiente_id) throw new Error('Resposta de outra cena.');
     conferirTexto(resposta.narracao, 4000, 'Narração');
@@ -291,7 +293,7 @@ function aplicarCena(campanha, mundo, resposta) {
     proxima.memoria.npcs_encontrados = [...new Set([...proxima.memoria.npcs_encontrados, ...atual.personagens.filter(npc => npc.ambiente_id === proxima.ambiente_id).map(npc => npc.id)])];
     proxima.diario.push({ id: pedido.id, turno: pedido.turno, acao: pedido.acao, tipo: pedido.tipo, ambiente_id: pedido.ambiente_id,
         participante_id: pedido.participante_id, personagem_id: pedido.personagem_id, teste: structuredClone(pedido.teste), resultado: structuredClone(pedido.resultado),
-        narracao: resposta.narracao.trim(), resumo: proxima.resumo, exige_resolucao_mecanica: resposta.exige_resolucao_mecanica });
+        narracao: resposta.narracao.trim(), escolhas: structuredClone(resposta.escolhas || []), resumo: proxima.resumo, exige_resolucao_mecanica: resposta.exige_resolucao_mecanica });
     proxima.pendente = null;
     if (resposta.encerramento.concluir) { proxima.estado = 'concluida'; proxima.desfecho = resposta.encerramento.desfecho.trim(); }
     return validarCampanha(proxima, mundo);

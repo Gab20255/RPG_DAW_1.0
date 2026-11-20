@@ -28,7 +28,7 @@ flowchart LR
 2. Os jogadores escolhem classe, origem, habilidades e retrato. Os atributos derivam da classe e são validados no servidor. A ficha recebe inventário inicial, vida e energia.
 3. O cliente envia a ação com o turno esperado. O servidor valida a participação na sala e serializa as operações da campanha.
 4. A ação e seus resultados mecânicos são persistidos como cena pendente. O contexto enviado ao Mestre inclui autor, local, fichas, objetivos, memória e resultado oficial.
-5. A resposta JSON é validada. A cena concluída atualiza o diário, os objetivos e o estado da campanha. Socket.IO transmite o estado aos jogadores.
+5. A narração chega progressivamente por Socket.IO durante a geração. A resposta JSON completa é validada antes de atualizar diário, objetivos e estado da campanha. As três escolhas sugeridas são produzidas na mesma consulta e persistidas com a cena.
 
 O servidor controla dados, vida, energia, habilidades, inventário e deslocamentos. A bandeja do navegador representa o resultado recebido. O identificador `acao_id` permite reconhecer o reenvio da mesma ação. A revisão da campanha impede que uma atualização antiga substitua uma versão mais recente.
 

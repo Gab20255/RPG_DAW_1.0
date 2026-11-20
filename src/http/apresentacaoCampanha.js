@@ -7,7 +7,7 @@ function selecionar(campos, objeto) {
 }
 
 function apresentarCena(cena) {
-    return cena ? { ...selecionar(['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'participante_id', 'personagem_id', 'teste', 'narracao', 'resumo', 'exige_resolucao_mecanica'], cena), resultado: apresentarResultadoMecanico(cena.resultado) } : null;
+    return cena ? { ...selecionar(['id', 'turno', 'acao', 'tipo', 'ambiente_id', 'participante_id', 'personagem_id', 'teste', 'narracao', 'resumo', 'escolhas', 'exige_resolucao_mecanica'], cena), resultado: apresentarResultadoMecanico(cena.resultado) } : null;
 }
 
 function apresentarUltimaRolagem(campanha) {

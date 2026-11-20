@@ -34,6 +34,7 @@ function validarDirecao(direcao) {
 const MODELO_DIRECAO = { conflito: '', objetivo: '', gancho: '', desfechos_possiveis: [''] };
 const MODELO_NARRACAO = {
     narracao: '', resumo: '',
+    escolhas: [{ rotulo: '', acao: '' }],
     direcao: [MODELO_DIRECAO], fatos: [''], pistas: [''], acontecimentos: [''],
     objetivos: [{ id: '', estado: '', motivo: '' }],
     novidades: {
@@ -54,4 +55,13 @@ function criarEsquema(valor) {
     return { type: typeof valor === 'number' ? 'integer' : typeof valor };
 }
 
-module.exports = { LIMITE_CONTEXTO, MODELO_CENA, MODELO_NARRACAO, MODELO_DIRECAO, conferirCampos, conferirTexto, conferirLista, chaveTexto, identificadorTexto, validarDirecao, criarEsquema };
+function validarEscolhas(escolhas) {
+    conferirLista(escolhas, 3, escolha => {
+        conferirCampos(escolha, ['rotulo', 'acao'], 'Escolha');
+        conferirTexto(escolha.rotulo, 70, 'Rótulo da escolha');
+        conferirTexto(escolha.acao, 240, 'Ação sugerida');
+    }, 'Escolhas');
+    if (new Set(escolhas.map(item => item.acao)).size !== escolhas.length) throw new Error('Escolhas repetidas.');
+}
+
+module.exports = { LIMITE_CONTEXTO, MODELO_CENA, MODELO_NARRACAO, MODELO_DIRECAO, conferirCampos, conferirTexto, conferirLista, chaveTexto, identificadorTexto, validarDirecao, validarEscolhas, criarEsquema };
