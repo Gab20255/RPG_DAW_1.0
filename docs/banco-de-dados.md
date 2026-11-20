@@ -7,6 +7,7 @@ erDiagram
     usuarios ||--o{ personagens : possui
     usuarios ||--o{ sessoes : autentica
     usuarios ||--o{ salas : hospeda
+    usuarios ||--o{ campanhas : cria
     usuarios ||--o{ sala_membros : participa
     salas ||--o{ sala_membros : inclui
     salas ||--o| salas_campanhas : vincula
@@ -14,11 +15,17 @@ erDiagram
     campanhas ||--o{ fichas_campanha : registra
     usuarios ||--o{ fichas_campanha : controla
     personagens ||--o| fichas_campanha : representa
+    salas ||--o{ sala_jogadores : agrupa
+    personagens ||--o{ sala_jogadores : integra
     salas ||--o{ mapas_cenarios : contem
     campanhas ||--o{ ambientes_mapas : associa
     mapas_cenarios ||--o| ambientes_mapas : ilustra
     salas ||--o{ mensagens : recebe
+    usuarios o|--o{ mensagens : escreve
+    personagens o|--o{ mensagens : atua
     campanhas ||--o{ cenas_mensagens : organiza
+    mensagens ||--o| cenas_mensagens : acao
+    mensagens ||--o| cenas_mensagens : narracao
     campanhas ||--o{ pedidos_acoes : identifica
 ```
 
@@ -38,5 +45,8 @@ erDiagram
 | `mensagens` | Sala, autoria, tipo, conteúdo e data da ação ou narração. |
 | `cenas_mensagens` | Associa cada cena a uma mensagem de ação e uma de narração. |
 | `pedidos_acoes` | Campanha, identificador da ação, autor, turno e texto, para reconhecer reenvios. |
+| `migracoes` | Nome único e data de aplicação de cada migração. |
 
 `campanhas.mundo_json` preserva o estado completo, incluindo energia, efeitos, memória, objetivos e cena pendente. A atualização da campanha sincroniza fichas, mapas e mensagens na mesma transação. O campo `revisao` é conferido antes da escrita. A chave composta de `cenas_mensagens` impede publicar novamente uma cena concluída.
+
+As escolhas do Mestre são armazenadas em cada entrada do diário no JSON da campanha. Os fragmentos transmitidos durante a geração são temporários. Se a consulta for interrompida, a cena pendente conserva a ação, sua autoria e os resultados mecânicos para retomar a narração. O catálogo de imagens está no código e as URLs escolhidas ficam nas fichas e nos mapas.

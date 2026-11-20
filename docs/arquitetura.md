@@ -28,7 +28,7 @@ flowchart LR
 2. Os jogadores escolhem classe, origem, habilidades e retrato. Os atributos derivam da classe e são validados no servidor. A ficha recebe inventário inicial, vida e energia.
 3. O cliente envia a ação com o turno esperado. O servidor valida a participação na sala e serializa as operações da campanha.
 4. A ação e seus resultados mecânicos são persistidos como cena pendente. O contexto enviado ao Mestre inclui autor, local, fichas, objetivos, memória e resultado oficial.
-5. A narração chega progressivamente por Socket.IO durante a geração. A resposta JSON completa é validada antes de atualizar diário, objetivos e estado da campanha. As três escolhas sugeridas são produzidas na mesma consulta e persistidas com a cena.
+5. A narração chega progressivamente por Socket.IO durante a geração. A resposta JSON completa é validada antes de atualizar diário, objetivos e estado da campanha. Até três escolhas sugeridas são produzidas na mesma consulta e persistidas com a cena. Na conclusão da aventura, a interface encerra as ações.
 
 O servidor controla dados, vida, energia, habilidades, inventário e deslocamentos. A bandeja do navegador representa o resultado recebido. O identificador `acao_id` permite reconhecer o reenvio da mesma ação. A revisão da campanha impede que uma atualização antiga substitua uma versão mais recente.
 
@@ -42,6 +42,8 @@ A imagem de cada ambiente é selecionada pelo tema, tipo, nome e descrição do 
 
 O projeto requer Node.js 24 ou superior. `npm install` instala as dependências e `npm start` executa `src/servidor.js`. O SQLite é criado e migrado na inicialização. O endereço padrão é `http://127.0.0.1:3000`, acessível por navegadores no computador do servidor.
 
+O arquivo `.env` deve existir na raiz, com os campos de `.env.example` e a credencial do provedor escolhido. Duas sessões de jogo no mesmo computador utilizam perfis de navegador distintos, como uma janela normal e outra privativa.
+
 | Variável | Uso |
 | --- | --- |
 | `PORT` | Porta HTTP, com padrão 3000. |
@@ -52,3 +54,10 @@ O projeto requer Node.js 24 ou superior. `npm install` instala as dependências 
 | `MASTER_MAX_TOKENS` | Limite de saída da narração de uma cena. |
 
 As opções de provedor estão em `.env.example`. As credenciais são lidas do `.env` pelo servidor. As sessões usam cookies `HttpOnly`, senhas bcrypt e tokens armazenados por hash no banco. Tanto as rotas privadas quanto os eventos Socket.IO verificam a identidade e o acesso à sala.
+
+| Provedor | Modelo Gemini | Seleção |
+| --- | --- | --- |
+| OpenRouter | `google/gemini-2.5-flash-lite` | `OPENROUTER_API_KEY` válida e `GEMINI_MODEL` com o identificador completo. |
+| Google AI Studio | `gemini-2.5-flash-lite` | `GEMINI_API_KEY` válida, `GEMINI_MODEL` com o identificador direto e `OPENROUTER_API_KEY` ausente ou comentada. |
+
+O servidor lê a configuração da IA na primeira consulta e reutiliza o serviço durante sua execução. Alterações de modelo ou credencial passam a valer após reiniciar o processo. A seleção e adaptação inicial da base, a sugestão de retrato e a narração são operações independentes, com validação da saída e tratamento de falhas próprios.

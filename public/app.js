@@ -488,6 +488,9 @@ function resetarFormularioAcao() {
     $('#action-form').reset();
     selecionarModoAcao('livre');
 }
+function limparFormularioConfirmado(formulario) {
+    if (formulario && $('#action-input').value === formulario.texto && $('#action-form').dataset.mode === formulario.modo) resetarFormularioAcao();
+}
 function lerAcaoFormulario() {
     const texto = $('#action-input').value.trim();
     if (escolhaAtual) return escolhaAtual.acao + (texto && !$('#action-input').hidden ? ' — ' + texto : '');
@@ -503,7 +506,7 @@ function reconciliarEnvio() {
     if (state.campaign.turno < envio.turno) return;
     envioSemConfirmacao = null;
     if (state.campaign.ultima_cena?.id === envio.id || state.scenes.has(envio.id)) {
-        if (envio.doFormulario && lerAcaoFormulario() === envio.acao) resetarFormularioAcao();
+        limparFormularioConfirmado(envio.formulario);
         notice('A ação foi registrada. O resultado está no diário.');
     } else {
         notice('A sala avançou enquanto a confirmação estava pendente. Confira o diário antes de reenviar.', true);
@@ -522,6 +525,7 @@ async function recuperarConfirmacao() {
 }
 async function sendAction(action, doFormulario = false) {
     const id = state.room.id, generation = state.generation;
+    const formulario = doFormulario ? { texto: $('#action-input').value, modo: $('#action-form').dataset.mode } : null;
     const turno = state.campaign.turno;
     const anterior = envioSemConfirmacao;
     const acaoId = anterior?.geracao === generation && anterior.turno === turno + 1 && anterior.acao === action
@@ -533,13 +537,13 @@ async function sendAction(action, doFormulario = false) {
         resposta = await ack('sala:acao', { sala_id: id, acao: action, turno_esperado: turno, acao_id: acaoId }, PRAZO_ACAO_MS);
     } catch (erro) {
         if (erro.code !== 'CONFIRMACAO_INDISPONIVEL' || generation !== state.generation) throw erro;
-        envioSemConfirmacao = { id: acaoId, geracao: generation, turno: turno + 1, acao: action, doFormulario };
+        envioSemConfirmacao = { id: acaoId, geracao: generation, turno: turno + 1, acao: action, formulario };
         await recuperarConfirmacao();
         return;
     }
     if (generation !== state.generation) return;
     applyCampaign(resposta.campanha);
-    if (doFormulario && lerAcaoFormulario() === action) resetarFormularioAcao();
+    limparFormularioConfirmado(formulario);
     renderRoom({ animarDado: state.synced });
     await loadHistory();
 }
@@ -616,17 +620,19 @@ $('#action-form').onsubmit = event => {
 $('#observe').onclick = () => run(() => sendAction('/observar'), 'Observando o ambiente…');
 for (const [selector, route] of [['#retry','repetir'], ['#discard','descartar']]) $(selector).onclick = () => run(async () => {
     const pending = state.campaign.pendente;
+    const formulario = lerAcaoFormulario() === pending.acao ? { texto: $('#action-input').value, modo: $('#action-form').dataset.mode } : null;
     const generation = state.generation;
     let resposta;
     try {
         resposta = await ack('sala:' + route, { sala_id: state.room.id, pedido_id: pending.id }, PRAZO_ACAO_MS);
     } catch (erro) {
         if (erro.code !== 'CONFIRMACAO_INDISPONIVEL' || generation !== state.generation) throw erro;
+        if (route === 'repetir') envioSemConfirmacao = { id: pending.id, geracao: generation, turno: pending.turno, acao: pending.acao, formulario };
         await recuperarConfirmacao();
         return;
     }
     if (generation !== state.generation) return;
-    if (lerAcaoFormulario() === pending.acao) resetarFormularioAcao();
+    limparFormularioConfirmado(formulario);
     applyCampaign(resposta.campanha); renderRoom(); await loadHistory();
 }, route === 'repetir' ? 'Retomando a cena pendente…' : 'Descartando a ação…');
 $('#older-history').onclick = () => run(() => loadHistory(true));

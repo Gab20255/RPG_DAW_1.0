@@ -6,9 +6,12 @@ As requisições HTTP usam JSON. Após o login, o navegador envia o cookie de se
 
 | Método e rota | Operação |
 | --- | --- |
+| `GET /api/saude` | Informa se o servidor está ativo. |
+| `GET /api/bases` | Lista as bases disponíveis. |
 | `POST /api/autenticacao/cadastro` | Cria a conta com `username`, `email` e `senha`. |
 | `POST /api/autenticacao/login` | Autentica `login` e `senha` e cria a sessão. |
 | `POST /api/autenticacao/logout` | Revoga a sessão e desconecta seus sockets. |
+| `GET /api/autenticacao/sessao` | Retorna usuário e expiração da sessão atual. |
 | `GET /api/salas` | Lista as salas do usuário. |
 | `POST /api/salas` | Cria sala com `titulo`, `historia` e `tom`. |
 | `POST /api/salas/entrar` | Entra na preparação pelo `codigo`. |
@@ -35,9 +38,13 @@ As requisições HTTP usam JSON. Após o login, o navegador envia o cookie de se
 
 O navegador gera `acao_id` no formato `acao_` seguido de 32 caracteres hexadecimais. Clientes antigos podem omiti-lo. Quando presente, o mesmo identificador só aceita o mesmo autor, turno e texto. O reconhecimento persiste após reiniciar o servidor.
 
+`turno_esperado` corresponde ao último turno concluído no snapshot do cliente. `pedido_id`, usado para repetir ou descartar, é o identificador da cena pendente. A ação aceita até 1.000 caracteres. Cada consulta do histórico aceita `limite` entre 1 e 100 e `deslocamento` a partir de zero.
+
 O acknowledgement contém `ok: true` e o resultado ou `ok: false` e `erro`, com `codigo`, `status` e `mensagem`. O servidor publica `sala:atualizada` para mudanças do lobby e `campanha:atualizada` para o estado da aventura. `sessao:encerrada` informa expiração ou revogação.
 
 Durante a geração, `campanha:narracao` transmite `sala_id`, `campanha_id`, `cena_id` e o `texto` acumulado da narração. A interface apresenta esses trechos enquanto a resposta completa é validada. Em caso de falha, o evento recebe `erro: true` e a interface oferece a recuperação da cena pendente. A publicação definitiva continua sendo feita por `campanha:atualizada`.
+
+Cada evento de narração substitui a prévia anterior da mesma cena. Ao reconectar, o cliente recupera o snapshot e o diário. Novos fragmentos trazem o texto acumulado até aquele momento. O diário recebe a cena completa quando a resposta passa pela validação.
 
 As cenas podem incluir até três `escolhas`, cada uma com `rotulo` e `acao`. Elas são persistidas no diário e reapresentadas ao reconectar. O jogador seleciona uma opção e pode complementar diálogos e investigações. A abertura e cenas antigas recebem opções locais com base nos NPCs e conexões disponíveis. Os resultados mecânicos continuam sendo validados ao executar cada ação.
 
