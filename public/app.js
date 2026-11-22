@@ -45,7 +45,11 @@ async function api(path, body) {
     const data = response.status === 204 ? {} : await response.json();
     if (!response.ok) {
         if (response.status === 401 && state.user) expireSession();
-        const error = new Error(data.erro?.mensagem || 'Não foi possível concluir a operação.'); error.status = response.status; error.code = data.erro?.codigo; throw error;
+        const error = new Error(data.erro?.mensagem || 'Não foi possível concluir a operação.');
+        error.status = response.status;
+        error.code = data.erro?.codigo;
+        error.detalhes = data.erro?.detalhes;
+        throw error;
     }
     return data;
 }
@@ -55,15 +59,28 @@ async function run(task, message = '') {
     try { await task(); if (message && $('#notice').textContent === message) notice(); }
     catch (error) {
         if (state.room && state.user) { try { await refreshRoom(); } catch { /* Mantém o erro original. */ } }
+        const pendente = state.campaign?.pendente;
+        if (error.code === 'LIMITE_IA' && pendente && pendente.id === error.detalhes?.pendente?.id) {
+            narracaoEmCurso = { cena_id: pendente.id, erro: true, codigo: error.code, texto: '' };
+            renderNarracao();
+        }
         notice(error.message + (error.status === 429 ? ' Aguarde um pouco antes de tentar novamente.' : ''), true);
     } finally { state.busy = false; document.body.classList.remove('busy'); lockControls(); }
 }
 function lockControls() {
-    document.querySelectorAll('form button, #suggest-avatar, #refresh-rooms, #back, #logout, .room-entry, #copy-code, #older-history').forEach(el => { el.disabled = state.busy; });
+    document.querySelectorAll('form button, #refresh-rooms, #back, #logout, .room-entry, #copy-code, #older-history').forEach(el => { el.disabled = state.busy; });
+    atualizarBotaoSalvarPersonagem();
     const room = state.room, campaign = state.campaign, me = room?.membros.find(m => m.usuario_id === state.user?.id);
     $('#ready').disabled = state.busy || !room?.ativa || !me?.personagem_id || room.etapa !== 'preparacao';
     $('#start-game').disabled = state.busy || !room?.preparacao.pronta_para_iniciar;
-    const canAct = !state.busy && state.synced && !!state.socket?.connected && room?.ativa && room.etapa === 'em_andamento' && campaign?.estado !== 'concluida' && !campaign?.pendente;
+    const vez = campaign?.participantes.find(p => p.id === campaign.participante_da_vez);
+    const minhaVez = !!vez && vez.id === me?.participante_id;
+    const canAct = !state.busy && state.synced && !!state.socket?.connected && room?.ativa && room.etapa === 'em_andamento' && minhaVez && !campaign.pendente;
+    const ordem = $('#turn-owner');
+    ordem.dataset.vez = minhaVez && !campaign.pendente ? 'sua' : '';
+    ordem.textContent = campaign?.estado === 'concluida' ? '' : campaign?.pendente
+        ? ($('#live-scene').hidden ? 'Narração pendente.' : 'O Mestre está resolvendo a ação.')
+        : minhaVez ? `Sua vez, ${vez.ficha.nome}.` : vez ? `Vez de ${vez.ficha.nome}.` : '';
     document.querySelectorAll('#action-form button, #action-form select, #action-input, #destinations button').forEach(el => { el.disabled = !canAct; });
     if (pedidoRolagem?.etapa === 'aguardando') {
         if (pedidoRolagem.generation !== state.generation || pedidoRolagem.turno !== campaign?.turno || campaign?.pendente || !room?.ativa) fecharRolagem();
@@ -74,9 +91,13 @@ function lockControls() {
             if (habilitar) botao.focus();
         }
     }
-    const mine = campaign?.pendente?.participante_id === `usuario_${state.user?.id}`;
-    $('#retry').disabled = state.busy || !state.synced || !state.socket?.connected || !mine || !room?.ativa;
-    $('#discard').disabled = $('#retry').disabled || !!campaign?.pendente?.teste || !!campaign?.pendente?.resultado;
+    const pendente = campaign?.pendente;
+    const podeRetomar = !!pendente && !!me?.participante_id && room?.ativa && room.etapa === 'em_andamento';
+    const podeDescartar = podeRetomar && pendente.participante_id === me.participante_id && !pendente.teste && !pendente.resultado;
+    $('#retry').hidden = !podeRetomar;
+    $('#retry').disabled = state.busy || !podeRetomar;
+    $('#discard').hidden = !podeDescartar;
+    $('#discard').disabled = state.busy || !podeDescartar || !state.synced || !state.socket?.connected;
     if (campaign) $('#action-help').textContent = !room?.ativa ? 'Sala encerrada.' : campaign.estado === 'concluida' ? 'Aventura concluída.' : !state.synced || !state.socket?.connected ? 'Reconectando à mesa…' : '';
 }
 function applyRoom(room) { if (state.room?.id === room.id && room.revisao_preparacao < state.room.revisao_preparacao) return; state.room = room; }
@@ -89,15 +110,32 @@ function connect() {
         if (state.room) followRoom().catch(error => notice(error.message, true));
         lockControls();
     });
-    socket.on('disconnect', () => { state.synced = false; $('#connection').textContent = '○ Reconectando…'; lockControls(); });
+    socket.on('disconnect', () => {
+        state.synced = false;
+        narracaoEmCurso = null;
+        $('#connection').textContent = '○ Reconectando…';
+        renderNarracao();
+        lockControls();
+    });
     socket.on('connect_error', error => { $('#connection').textContent = '○ Sem conexão'; if (['SESSAO_INVALIDA', 'SESSAO_EXPIRADA', 'NAO_AUTENTICADO'].includes(error.data?.codigo)) expireSession(); else api('/autenticacao/sessao').catch(e => notice(e.message, true)); lockControls(); });
     socket.on('sessao:encerrada', () => { expireSession(); notice('Sua sessão terminou. Entre novamente.', true); });
     socket.on('sala:atualizada', ({ sala }) => { if (sala.id !== state.room?.id) return; applyRoom(sala); renderRoom(); });
-    socket.on('campanha:atualizada', ({ sala_id, campanha }) => { if (sala_id !== state.room?.id) return; applyCampaign(campanha); renderRoom({ animarDado: state.synced }); loadHistory().catch(error => notice(error.message, true)); });
+    socket.on('campanha:atualizada', ({ sala_id, campanha }) => {
+        if (sala_id !== state.room?.id) return;
+        const pendente = state.campaign?.pendente;
+        const autor = state.room.membros.find(m => m.usuario_id === state.user?.id)?.participante_id;
+        if (pendente && pendente.id === campanha.ultima_cena?.id && pendente.participante_id === autor && lerAcaoFormulario() === pendente.acao) {
+            resetarFormularioAcao();
+        }
+        applyCampaign(campanha);
+        renderRoom({ animarDado: state.synced });
+        loadHistory().catch(error => notice(error.message, true));
+    });
     socket.on('campanha:narracao', trecho => {
         if (trecho.sala_id !== state.room?.id || trecho.cena_id !== state.campaign?.pendente?.id) return;
         narracaoEmCurso = trecho;
         renderNarracao();
+        lockControls();
     });
     socket.connect();
 }
@@ -118,6 +156,7 @@ async function ack(event, body, prazo = 15000) {
     const erro = new Error(publico?.mensagem || 'Falha na sincronização.');
     erro.status = publico?.status;
     erro.code = publico?.codigo;
+    erro.detalhes = publico?.detalhes;
     throw erro;
 }
 async function followRoom() {
@@ -178,9 +217,10 @@ function buildCharacterForm() {
     $('#skill-options').innerHTML = catalog.habilidades.filter(h => h.disponivel).map(h => `<label class="skill-option"><input type="checkbox" name="habilidades_ids" value="${escapeHtml(h.id)}"><span>${escapeHtml(h.nome)}<small>${escapeHtml(h.descricao)} · Energia: ${escapeHtml(h.custoRecurso)}</small></span></label>`).join('');
     const themes = new Map(catalog.avatares.map(avatar => [avatar.base_id, avatar.tema]));
     $('#avatar-theme').innerHTML = option('', 'Todos os temas') + [...themes].map(([id, name]) => option(id, name)).join('');
+    montarFiltrosDeTracos(catalog.filtros_avatares || []);
     $('#avatar-options').innerHTML = catalog.avatares.map(avatar => {
         const search = searchText(`${avatar.id} ${avatar.nome} ${avatar.descricao}`);
-        return `<label class="avatar-option" data-theme="${escapeHtml(avatar.base_id)}" data-search="${escapeHtml(search)}">
+        return `<label class="avatar-option" data-theme="${escapeHtml(avatar.base_id)}" data-search="${escapeHtml(search)}" data-tracos="${escapeHtml((avatar.tracos || []).join(' '))}">
             <input type="radio" name="avatar_id" value="${escapeHtml(avatar.id)}" required>
             <img src="${escapeHtml(safeImage(avatar.url))}" alt="${escapeHtml(avatar.descricao)}" loading="lazy">
             <span>${escapeHtml(avatar.nome)}</span>
@@ -189,22 +229,55 @@ function buildCharacterForm() {
     updateClass();
     filterAvatars();
 }
+function montarFiltrosDeTracos(grupos) {
+    $('#avatar-traits').hidden = !grupos.length;
+    $('#avatar-trait-groups').innerHTML = grupos.map(({ id, rotulo }, indice) => `
+        <button type="button" class="quiet" data-avatar-group="${escapeHtml(id)}" aria-expanded="${indice === 0}" aria-controls="avatar-trait-${escapeHtml(id)}">
+            <strong>${escapeHtml(rotulo)}</strong><span>Qualquer</span>
+        </button>`).join('');
+    $('#avatar-trait-options').innerHTML = grupos.map(({ id, rotulo, opcoes }, indice) => `
+        <div class="avatar-trait-panel" id="avatar-trait-${escapeHtml(id)}" role="group" aria-label="Estilos de ${escapeHtml(rotulo)}" ${indice ? 'hidden' : ''}>
+            <button type="button" data-avatar-trait="" aria-pressed="true">Qualquer</button>
+            ${opcoes.map(opcao => `<button type="button" data-avatar-trait="${escapeHtml(opcao.id)}" aria-pressed="false">${escapeHtml(opcao.rotulo)}</button>`).join('')}
+        </div>`).join('');
+}
+function tracosSelecionados() {
+    return Array.from($('#avatar-trait-options').querySelectorAll('[data-avatar-trait][aria-pressed="true"]'),
+        botao => botao.dataset.avatarTrait).filter(Boolean);
+}
+function selecionarTraco(botao) {
+    const painel = botao.parentElement;
+    for (const opcao of painel.children) opcao.setAttribute('aria-pressed', String(opcao === botao));
+    const grupo = [...$('#avatar-trait-groups').children].find(item => item.getAttribute('aria-controls') === painel.id);
+    grupo.querySelector('span').textContent = botao.textContent;
+}
+function atualizarBotaoSalvarPersonagem() {
+    const escolhido = $('#avatar-options input:checked');
+    const precisaEscolher = !escolhido || (tracosSelecionados().length > 0 && escolhido.closest('label').hidden);
+    $('#save-character').disabled = state.busy || precisaEscolher;
+}
 function showAvatarSelection() {
     const input = $('#avatar-options input:checked');
     const avatar = state.catalog.avatares.find(item => item.id === input?.value);
     const outsideFilter = input?.closest('label').hidden;
-    $('#avatar-selected').textContent = avatar
+    $('#avatar-selected').textContent = outsideFilter && tracosSelecionados().length
+        ? 'Escolha um retrato que combine com os traços marcados.'
+        : avatar
         ? `Selecionado: ${avatar.nome}${outsideFilter ? ' (fora do filtro atual)' : ''}`
         : 'Selecione um retrato.';
+    atualizarBotaoSalvarPersonagem();
 }
 function filterAvatars() {
     const grid = $('#avatar-options');
     const theme = $('#avatar-theme').value;
     const terms = searchText($('#avatar-search').value).split(' ').filter(Boolean);
+    const tracos = tracosSelecionados();
     let visible = 0;
     // Ocultar a opção mantém o rádio selecionado no formulário quando o jogador muda o filtro.
     for (const card of grid.children) {
-        card.hidden = Boolean(theme && card.dataset.theme !== theme) || !terms.every(term => card.dataset.search.includes(term));
+        const disponiveis = card.dataset.tracos.split(' ');
+        card.hidden = Boolean(theme && card.dataset.theme !== theme) || !terms.every(term => card.dataset.search.includes(term))
+            || !tracos.every(traco => disponiveis.includes(traco));
         if (!card.hidden) visible++;
     }
     grid.hidden = visible === 0;
@@ -212,22 +285,21 @@ function filterAvatars() {
     $('#avatar-count').textContent = visible
         ? `${visible} ${visible === 1 ? 'retrato' : 'retratos'}`
         : 'Nenhum retrato encontrado. Tente outros filtros.';
-    $('#clear-avatar-filters').hidden = !theme && !$('#avatar-search').value;
+    $('#clear-avatar-filters').hidden = !theme && !$('#avatar-search').value && !tracos.length;
     showAvatarSelection();
 }
 function clearAvatarFilters() {
     $('#avatar-search').value = '';
     $('#avatar-theme').value = '';
+    $('#avatar-trait-options').querySelectorAll('[data-avatar-trait=""]').forEach(selecionarTraco);
     filterAvatars();
 }
-function selectAvatar(id) {
-    const input = [...$('#avatar-options').querySelectorAll('input')].find(item => item.value === id);
-    if (input) input.checked = true;
-    showAvatarSelection();
-    return input;
-}
 function attributes(values) { return Object.entries(values || {}).map(([name, value]) => `<span class="attribute">${escapeHtml(name)} <strong>${escapeHtml(value)}</strong></span>`).join(''); }
-function updateClass() { const current = state.catalog.classes.find(c => c.id === $('#class-select').value); $('#class-description').textContent = current.descricao; $('#class-attributes').innerHTML = attributes(current.atributos); selectAvatar(current.avatar_sugerido_id); }
+function updateClass() {
+    const current = state.catalog.classes.find(c => c.id === $('#class-select').value);
+    $('#class-description').textContent = current.descricao;
+    $('#class-attributes').innerHTML = attributes(current.atributos);
+}
 function characterCard(ficha, inventarioEmSeparado = false) {
     const itens = ficha.inventario.map(item => `<li><strong>${escapeHtml(item.nome)}</strong><small> — ${escapeHtml(item.descricao)}</small></li>`);
     const habilidades = ficha.habilidades.map(habilidade => `<li>${escapeHtml(habilidade.nome)}<small> · ${escapeHtml(habilidade.custoRecurso)} energia</small></li>`);
@@ -385,10 +457,9 @@ function renderRoom({ animarDado = false } = {}) {
     $('#action-routes-link').hidden = !$('#destinations').childElementCount;
     $('#turn').textContent = `Turno ${campanha.turno}`;
     $('#objectives').innerHTML = campanha.objetivos.map(o => `<div class="objective">${escapeHtml(o.descricao)}<small>${escapeHtml(o.estado)}</small></div>`).join('');
-    $('#pending').hidden = !campanha.pendente;
-    const mine = campanha.pendente?.participante_id === me?.participante_id;
-    $('#pending-text').textContent = campanha.pendente ? `Cena pendente: ${campanha.pendente.acao}. ${mine ? 'Se a narração falhar, tente novamente sem repetir a rolagem.' : 'Aguardando a narração ou a recuperação pelo autor da ação.'}` : '';
-    $('#retry').hidden = !mine; $('#discard').hidden = !mine || !!campanha.pendente?.teste || !!campanha.pendente?.resultado;
+    const pistas = [...new Set(campanha.memoria.pistas.map(pista => pista.texto))].slice(-4);
+    $('#campaign-clues').hidden = !pistas.length;
+    $('#clues-list').innerHTML = pistas.map(pista => `<li>${escapeHtml(pista)}</li>`).join('');
     $('#ending').hidden = !campanha.desfecho; $('#ending').textContent = campanha.desfecho || '';
     renderHistory(); renderEscolhas(); renderNarracao(); lockControls();
 }
@@ -401,6 +472,8 @@ function renderNarracao() {
     $('#live-text').textContent = ativa ? trecho.texto : '';
     $('#live-title').textContent = trecho?.texto ? 'O Mestre narra' : trecho?.tentativa > 1 ? 'O Mestre reformula a cena' : 'O Mestre prepara a cena';
     $('#pending').hidden = !pendente || ativa;
+    const limite = trecho?.codigo === 'LIMITE_IA' ? 'O provedor da IA está limitando as requisições. Aguarde um pouco. ' : '';
+    $('#pending-text').textContent = pendente ? `${limite}Ação salva: ${pendente.acao}. Tentar novamente usa a mesma ação e o resultado já registrado.` : '';
 }
 function renderEscolhas() {
     const campanha = state.campaign;
@@ -415,9 +488,12 @@ function renderEscolhas() {
     const local = campanha.mundo.ambientes.find(item => item.id === campanha.ambiente_id);
     const npc = campanha.mundo.personagens.find(item => item.ambiente_id === campanha.ambiente_id);
     const destino = campanha.mundo.ambientes.find(item => item.id === local?.conexoes_ids[0]);
+    const pista = campanha.memoria.pistas.at(-1)?.texto;
     const iniciais = [
-        { rotulo: 'Investigar o local', acao: '/teste inteligencia Procuro pistas sobre o objetivo da aventura em ' + local.nome },
-        { rotulo: npc ? 'Conversar com ' + npc.nome : 'Examinar os arredores', acao: npc ? '/falar Pergunto a ' + npc.nome + ' como podemos avançar no objetivo da aventura.' : '/observar' },
+        { rotulo: 'Investigar o local', acao: '/teste inteligencia Examino os arredores de ' + local.nome + ' em busca de um detalhe que passou despercebido.' },
+        { rotulo: npc ? 'Conversar com ' + npc.nome : 'Examinar os arredores', acao: npc
+            ? `/falar Pergunto a ${npc.nome} ${pista ? 'o que sabe sobre esta pista: ' + pista : 'se aconteceu algo incomum neste local.'}`
+            : '/observar' },
         ...(destino ? [{ rotulo: 'Seguir para ' + destino.nome, acao: '/ir ' + destino.id }] : []),
     ];
     const escolhas = campanha.ultima_cena?.escolhas?.length ? campanha.ultima_cena.escolhas : iniciais;
@@ -463,6 +539,7 @@ function updateHistoryNavigation() {
 }
 function descreverAcao(scene, place) {
     if (scene.tipo === 'transicao' && place) return 'Ir para ' + place;
+    if (scene.acao === '/passar') return 'Passar a vez';
     if (scene.tipo === 'observacao') return 'Observar o local';
     if (scene.tipo === 'dialogo') return 'Diz: ' + scene.acao.replace(/^\/falar\s+/, '');
     if (scene.teste) {
@@ -485,8 +562,7 @@ function sceneEntry(scene) {
         ${place ? `<span>${escapeHtml(place)}</span>` : ''}
         </header>
         <p class="action">${escapeHtml(action)}</p>
-        ${test ? `<p class="result ${test.sucesso ? 'result--success' : 'result--failure'}">
-            <strong>${test.sucesso ? 'Sucesso' : 'Falha'}</strong> · D20 ${test.d20} ${test.bonus < 0 ? '−' : '+'} ${Math.abs(test.bonus)} = ${test.total}</p>` : ''}
+        ${test ? `<p class="result result--test ${test.sucesso ? 'result--success' : 'result--failure'}"><strong>${test.sucesso ? 'Sucesso' : 'Falha'}</strong> · D20 ${test.d20} ${test.bonus < 0 ? '−' : '+'} ${Math.abs(test.bonus)} = ${test.total}</p>` : ''}
         ${scene.resultado ? `<p class="result">${escapeHtml(scene.resultado.resumo)}</p>` : ''}
         <p class="scene-narration">${escapeHtml(scene.narracao)}</p>
         ${scene.exige_resolucao_mecanica ? '<small>Esta intenção ainda exige resolução pelas regras do jogo.</small>' : ''}`;
@@ -543,9 +619,13 @@ function limparFormularioConfirmado(formulario) {
 }
 function lerAcaoFormulario() {
     const texto = $('#action-input').value.trim();
+    const modo = $('#action-form').dataset.mode;
+    const fala = texto.match(/^["“]?\s*\/falar\s+([\s\S]+)$/);
+    if (fala && (modo === 'falar' || !escolhaAtual || escolhaAtual.acao.startsWith('/falar '))) {
+        return '/falar ' + (texto.startsWith('"') || texto.startsWith('“') ? fala[1].replace(/["”]$/, '') : fala[1]);
+    }
     if (escolhaAtual) return escolhaAtual.acao + (texto && !$('#action-input').hidden ? ' — ' + texto : '');
     if (!texto) return '';
-    const modo = $('#action-form').dataset.mode;
     if (modo === 'falar') return '/falar ' + texto;
     if (modo === 'teste') return '/teste ' + $('#action-attribute').value + ' ' + texto;
     return texto.startsWith('/') ? texto : '';
@@ -631,30 +711,44 @@ $('#avatar-search').onkeydown = event => {
 };
 $('#avatar-theme').onchange = filterAvatars;
 $('#avatar-options').onchange = showAvatarSelection;
+$('#avatar-trait-groups').onclick = event => {
+    const grupo = event.target.closest('[data-avatar-group]');
+    if (!grupo) return;
+    for (const botao of $('#avatar-trait-groups').children) {
+        const aberto = botao === grupo;
+        botao.setAttribute('aria-expanded', String(aberto));
+        document.getElementById(botao.getAttribute('aria-controls')).hidden = !aberto;
+    }
+};
+$('#avatar-trait-options').onclick = event => {
+    const opcao = event.target.closest('[data-avatar-trait]');
+    if (!opcao) return;
+    selecionarTraco(opcao);
+    filterAvatars();
+};
 $('#clear-avatar-filters').onclick = () => {
     clearAvatarFilters();
     $('#avatar-search').focus();
 };
-$('#suggest-avatar').onclick = () => run(async () => {
-    const classe_id = $('#class-select').value;
-    const raca_id = $('#race-select').value;
-    const descricao_visual = $('#character-form [name="descricao_visual"]').value;
-    const avatarAnterior = $('#avatar-options input:checked')?.value;
-    const { avatar, selecao } = await api(`/salas/${state.room.id}/avatar/previa`, {
-        classe_id, descricao_visual, ...(raca_id ? { raca_id } : {}),
+$('#character-form').onsubmit = event => {
+    event.preventDefault();
+    if ($('#save-character').disabled) return;
+    const data = new FormData(event.target);
+    const body = Object.fromEntries(data);
+    const retrato = state.catalog.avatares.find(avatar => avatar.id === body.avatar_id);
+    body.descricao_visual = body.descricao_visual.trim() || retrato.descricao;
+    body.habilidades_ids = data.getAll('habilidades_ids');
+    if (!body.raca_id) delete body.raca_id;
+    if (body.habilidades_ids.length !== state.catalog.regras.habilidades_por_personagem) {
+        notice(`Escolha exatamente ${state.catalog.regras.habilidades_por_personagem} habilidades.`, true);
+        return;
+    }
+    run(async () => {
+        await api(`/salas/${state.room.id}/personagem`, body);
+        await refreshRoom();
+        notice('Personagem salvo. Confirme quando estiver pronto.');
     });
-    if (classe_id !== $('#class-select').value || raca_id !== $('#race-select').value
-        || descricao_visual !== $('#character-form [name="descricao_visual"]').value
-        || avatarAnterior !== $('#avatar-options input:checked')?.value) return;
-    const card = selectAvatar(avatar.id)?.closest('label');
-    const outsideFilter = card?.hidden;
-    if (outsideFilter) clearAvatarFilters();
-    card?.scrollIntoView({ block: 'nearest' });
-    const origem = selecao === 'local' ? ' Seleção pelo catálogo local.' : '';
-    const filtros = outsideFilter ? ' Os filtros foram limpos para mostrar o retrato.' : '';
-    notice(`Retrato sugerido: ${avatar.nome}.${origem}${filtros}`);
-}, 'Buscando um retrato no catálogo…');
-$('#character-form').onsubmit = event => { event.preventDefault(); const data = new FormData(event.target), body = Object.fromEntries(data); body.habilidades_ids = data.getAll('habilidades_ids'); if (!body.raca_id) delete body.raca_id; if (body.habilidades_ids.length !== state.catalog.regras.habilidades_por_personagem) { notice(`Escolha exatamente ${state.catalog.regras.habilidades_por_personagem} habilidades.`, true); return; } run(async () => { await api(`/salas/${state.room.id}/personagem`, body); await refreshRoom(); notice('Personagem salvo. Confirme quando estiver pronto.'); }); };
+};
 $('#ready').onclick = () => run(async () => { const me = state.room.membros.find(m => m.usuario_id === state.user.id); const { sala } = await api(`/salas/${state.room.id}/pronto`, { pronto: !me.pronto }); applyRoom(sala); renderRoom(); });
 $('#start-game').onclick = () => run(async () => { const { sala } = await api(`/salas/${state.room.id}/iniciar`, {}); applyRoom(sala); renderRoom(); });
 for (const [valor, rotulo] of Object.entries(nomesAtributos)) {
@@ -691,16 +785,20 @@ $('#roll-d20').onclick = () => {
     });
 };
 $('#observe').onclick = () => run(() => sendAction('/observar'), 'Observando o ambiente…');
+$('#pass-turn').onclick = () => run(() => sendAction(state.campaign.mecanica.encontro?.estado === 'ativo' ? '/esperar' : '/passar'));
 for (const [selector, route] of [['#retry','repetir'], ['#discard','descartar']]) $(selector).onclick = () => run(async () => {
     const pending = state.campaign.pendente;
-    const formulario = lerAcaoFormulario() === pending.acao ? { texto: $('#action-input').value, modo: $('#action-form').dataset.mode } : null;
+    if (!pending) return;
+    const minhaAcao = pending.participante_id === state.room.membros.find(m => m.usuario_id === state.user.id)?.participante_id;
+    const formulario = minhaAcao && lerAcaoFormulario() === pending.acao ? { texto: $('#action-input').value, modo: $('#action-form').dataset.mode } : null;
     const generation = state.generation;
     let resposta;
     try {
-        resposta = await ack('sala:' + route, { sala_id: state.room.id, pedido_id: pending.id }, PRAZO_ACAO_MS);
+        resposta = route === 'repetir'
+            ? await api(`/salas/${state.room.id}/repetir`, { pedido_id: pending.id })
+            : await ack('sala:descartar', { sala_id: state.room.id, pedido_id: pending.id }, PRAZO_ACAO_MS);
     } catch (erro) {
         if (erro.code !== 'CONFIRMACAO_INDISPONIVEL' || generation !== state.generation) throw erro;
-        if (route === 'repetir') envioSemConfirmacao = { id: pending.id, geracao: generation, turno: pending.turno, acao: pending.acao, formulario };
         await recuperarConfirmacao();
         return;
     }

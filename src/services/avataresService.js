@@ -4,7 +4,10 @@ const { BASES_RPG } = require('../data/basesRpg');
 
 const TEMAS = new Map(BASES_RPG.map(base => [base.id, base.nome]));
 const RETRATOS = new Map([...CATALOGO_AVATARES, ...AVATARES].map(avatar => [avatar.id, avatar]));
-const PALAVRAS_COMUNS = new Set(['uma', 'com', 'sem', 'sobre', 'pele', 'cabelo', 'cabelos', 'roupa', 'roupas', 'pessoa']);
+const PALAVRAS_COMUNS = new Set(['uma', 'com', 'sem', 'sobre', 'pele', 'cabel', 'roup', 'pesso', 'vest', 'usar']);
+const EQUIVALENCIAS = new Map([
+    ['amarel', 'ambar'], ['rox', 'violeta'], ['armadur', 'courac'],
+]);
 
 function normalizar(texto) {
     return ` ${String(texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `;
@@ -33,13 +36,24 @@ function obterAvatar(id) {
 
 function listarAvatares(mundo) {
     const base = baseDosAvatares(mundo);
-    return [...CATALOGO_AVATARES].sort((primeiro, segundo) => Number(segundo.base_id === base) - Number(primeiro.base_id === base)).map(apresentarAvatar);
+    return [...CATALOGO_AVATARES].sort((primeiro, segundo) => Number(segundo.base_id === base) - Number(primeiro.base_id === base))
+        .map(avatar => ({ ...apresentarAvatar(avatar), tracos: avatar.tracos }));
+}
+
+function palavras(texto) {
+    return normalizar(texto).trim().split(/\s+/).map(palavra => {
+        const raiz = palavra.replace(/s$/, '').replace(/([a-z]{3})[ao]$/, '$1');
+        return EQUIVALENCIAS.get(raiz) || raiz;
+    });
 }
 
 function termos(texto) {
-    return new Set(normalizar(texto).trim().split(' ')
-        .filter(palavra => palavra.length >= 3 && !PALAVRAS_COMUNS.has(palavra))
-        .map(palavra => palavra.replace(/s$/, '').replace(/([a-z]{3})[ao]$/, '$1')));
+    return new Set(palavras(texto).filter(palavra => palavra.length >= 3 && !PALAVRAS_COMUNS.has(palavra)));
+}
+
+function detalhesVisuais(texto) {
+    const lista = palavras(texto).filter(palavra => palavra.length >= 3 && !['com', 'uma', 'sobre'].includes(palavra));
+    return new Set(lista.slice(1).map((palavra, indice) => lista[indice] + ' ' + palavra));
 }
 
 function contarTermos(procurados, disponiveis) {
@@ -49,7 +63,8 @@ function contarTermos(procurados, disponiveis) {
 const INDICE_VISUAL = CATALOGO_AVATARES.map(avatar => ({
     avatar,
     visual: termos(avatar.descricao),
-    papeis: termos(avatar.papeis.join(' ')),
+    detalhes: detalhesVisuais(avatar.descricao),
+    papeis: termos(avatar.nome + ' ' + avatar.papeis.join(' ')),
 }));
 
 function prepararSugestao(pedido, mundo) {
@@ -58,46 +73,61 @@ function prepararSugestao(pedido, mundo) {
     if (typeof pedido.descricao_visual !== 'string' || pedido.descricao_visual.trim().length > 1000) throw new Error('Descrição visual inválida.');
     const base = baseDosAvatares(mundo);
     const origem = mundo.racas?.find(item => item.id === pedido.raca_id)?.nome || '';
-    const descricao = termos(pedido.descricao_visual);
+    const excluidos = [];
+    const aparencia = normalizar(pedido.descricao_visual).replace(/\bsem (?:um |uma )?(barba|oculos|capuz|capacete|mascara)\b/g, (_, termo) => {
+        excluidos.push(termo);
+        return '';
+    });
+    const ausentes = termos(excluidos.join(' '));
+    const descricao = termos(aparencia);
+    const detalhes = detalhesVisuais(aparencia);
     const termosClasse = termos(classe.nome);
     const termosOrigem = termos(origem);
     const candidatos = INDICE_VISUAL.map(item => {
         const temaPrincipal = item.avatar.base_id === base;
         const visual = contarTermos(descricao, item.visual);
+        const combinacoes = contarTermos(detalhes, item.detalhes);
         const papel = contarTermos(descricao, item.papeis);
-        const origemCompativel = contarTermos(termosOrigem, item.papeis);
-        const pontos = (temaPrincipal ? 8 : 0) + visual * 4 + papel * 5
-            + origemCompativel * 7 + contarTermos(termosClasse, item.papeis) * 3;
-        return { avatar: item.avatar, temaPrincipal, visual, papel, origemCompativel, pontos };
+        const origemCompativel = contarTermos(termosOrigem, item.papeis) + contarTermos(termosOrigem, item.visual);
+        const papelDaClasse = contarTermos(termosClasse, item.papeis);
+        const conflitos = contarTermos(ausentes, item.visual);
+        const pontos = visual * 5 + combinacoes * 4 + papel * 7
+            + Math.min(origemCompativel, 1) * 4 + Math.min(papelDaClasse, 1) * 2 + (temaPrincipal ? 2 : 0) - conflitos * 12;
+        return { avatar: item.avatar, temaPrincipal, correspondencia: visual + papel + origemCompativel, visual, combinacoes, conflitos, pontos };
     }).sort((primeiro, segundo) => segundo.pontos - primeiro.pontos);
 
-    // O tema fornece opções suficientes. Acrescenta até três de outros temas com sinais de compatibilidade.
-    const externos = candidatos.filter(item => !item.temaPrincipal && (item.visual >= 2 || item.papel || item.origemCompativel)).slice(0, 3);
-    const disponiveis = candidatos.filter(item => item.temaPrincipal || externos.includes(item)).map(item => item.avatar);
+    const disponiveis = candidatos.filter(item => item.temaPrincipal || item.correspondencia).slice(0, 12);
     return { disponiveis, contexto: {
+        descricao_visual: pedido.descricao_visual.trim(),
         tema: mundo.mundo.tema.slice(0, 400),
         genero: TEMAS.get(base),
         classe: classe.nome,
         origem,
-        descricao_visual: pedido.descricao_visual.trim(),
-        candidatos: disponiveis.map(({ id, nome, descricao, papeis, base_id }) => ({ id, nome, descricao, papeis, tema: TEMAS.get(base_id) })),
+        candidatos: disponiveis.map(({ avatar: { id, nome, descricao, papeis, base_id } }) => ({ id, nome, descricao, papeis, tema: TEMAS.get(base_id) })),
     } };
 }
 
 function sugerirAvatar(pedido, mundo) {
-    return apresentarAvatar(prepararSugestao(pedido, mundo).disponiveis[0]);
+    return apresentarAvatar(prepararSugestao(pedido, mundo).disponiveis[0].avatar);
 }
 
 async function sugerirAvatarComIa(pedido, mundo, consultar) {
     const { disponiveis, contexto } = prepararSugestao(pedido, mundo);
+    const [melhor] = disponiveis;
     if (contexto.descricao_visual) {
         try {
             const id = await consultar(contexto);
-            const escolhido = disponiveis.find(avatar => avatar.id === id);
-            if (escolhido) return { avatar: apresentarAvatar(escolhido), selecao: 'ia' };
+            const escolhido = disponiveis.find(candidato => candidato.avatar.id === id);
+            if (escolhido) {
+                const diferencaVisual = melhor.visual - escolhido.visual;
+                const perdeuTracos = diferencaVisual >= 2 || (diferencaVisual > 0 && melhor.combinacoes > escolhido.combinacoes);
+                if (escolhido.conflitos <= melhor.conflitos && !perdeuTracos) {
+                    return { avatar: apresentarAvatar(escolhido.avatar), selecao: 'ia' };
+                }
+            }
         } catch { /* Permite criar a ficha mesmo com o provedor indisponível. */ }
     }
-    return { avatar: apresentarAvatar(disponiveis[0]), selecao: 'local' };
+    return { avatar: apresentarAvatar(melhor.avatar), selecao: 'local' };
 }
 
 function selecionarAvatar(pedido, mundo) {

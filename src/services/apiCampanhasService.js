@@ -1,6 +1,6 @@
 const { RepositorioCampanhas, validarIdCampanha } = require('../repositorios/campanhasRepositorio');
 const { iniciarMundoPorBase, listarBases, validarPedidoBase } = require('./basesRpgService');
-const { CondutorCampanha, errosDeCena } = require('./campanhaService');
+const { CondutorCampanha, errosDeCena, obterParticipanteDaVez } = require('./campanhaService');
 const { obterParticipante, prepararFichaCampanha } = require('./participantesCampanhaService');
 const ServicoModelo = require('./geminiService');
 const { obterConfiguracao } = require('./configuracaoService');
@@ -78,7 +78,7 @@ class ApiCampanhas extends EventEmitter {
                 if (erro.codigo === 'ROLAGEM_NECESSARIA') throw erro;
                 const publico = tratarErro(erro);
                 const mundo = await this.repositorio.carregar(id).catch(() => null);
-                if (mundo?.campanha.pendente) this.emit('narracao', { campanha_id: id, cena_id: mundo.campanha.pendente.id, erro: true, texto: '' });
+                if (mundo?.campanha.pendente) this.emit('narracao', { campanha_id: id, cena_id: mundo.campanha.pendente.id, erro: true, codigo: publico.codigo, texto: '' });
                 publico.detalhes = { campanha_id: id, ...(mundo ? { turno: mundo.campanha.turno, pendente: apresentarCena(mundo.campanha.pendente) } : {}) };
                 throw publico;
             }
@@ -108,7 +108,7 @@ class ApiCampanhas extends EventEmitter {
         return mundo;
     }
 
-    async agir(id, corpo) {
+    async agir(id, corpo, { alternarVez = false } = {}) {
         validarCorpo(corpo, ['acao', 'turno_esperado'], ['participante_id', 'acao_id', 'confirmar_rolagem']);
         if (typeof corpo.acao !== 'string' || !corpo.acao.trim() || corpo.acao.length > 1000 || !Number.isSafeInteger(corpo.turno_esperado) || corpo.turno_esperado < 0) throw new ErroAplicacao(400, 'ACAO_INVALIDA', 'Ação ou turno esperado inválido.');
         const acao = corpo.acao.trim();
@@ -128,6 +128,11 @@ class ApiCampanhas extends EventEmitter {
             if (campanha.pendente) throw new ErroAplicacao(409, 'CENA_PENDENTE', 'Há uma cena pendente de conclusão.');
             if (campanha.estado === 'concluida') throw new ErroAplicacao(409, 'CAMPANHA_CONCLUIDA', 'Campanha concluída.');
             validarAutor(campanha, participanteId);
+            if (alternarVez) {
+                const vez = obterParticipanteDaVez(campanha);
+                if (vez?.id !== participanteId) throw new ErroAplicacao(409, 'FORA_DA_VEZ',
+                    vez ? `É a vez de ${vez.ficha.nome}.` : 'Nenhum personagem está disponível para agir.');
+            }
             const rolar = confirmouRolagem ? undefined : () => {
                 throw new ErroAplicacao(409, 'ROLAGEM_NECESSARIA', 'Role o D20 para continuar.');
             };
@@ -136,7 +141,7 @@ class ApiCampanhas extends EventEmitter {
         });
     }
 
-    async repetir(id, corpo) {
+    async repetir(id, corpo, { retomadaEmGrupo = false } = {}) {
         validarCorpo(corpo, ['pedido_id'], ['participante_id']);
         validarIdCampanha(corpo.pedido_id);
         return this.alterar(id, async (condutor, mundo) => {
@@ -144,8 +149,9 @@ class ApiCampanhas extends EventEmitter {
             const cena = campanha.diario.find(item => item.id === corpo.pedido_id);
             const pedido = cena || campanha.pendente;
             if (!pedido || pedido.id !== corpo.pedido_id) throw new ErroAplicacao(409, 'PEDIDO_INCOMPATIVEL', 'Pedido não encontrado nesta campanha.');
-            if ((corpo.participante_id ?? null) !== pedido.participante_id) throw new ErroAplicacao(409, 'AUTOR_INCOMPATIVEL', 'O pedido pertence a outro participante.');
-            if (!cena) await condutor.executar('/repetir', { participanteId: corpo.participante_id ?? null });
+            if (retomadaEmGrupo) validarAutor(campanha, corpo.participante_id);
+            else if ((corpo.participante_id ?? null) !== pedido.participante_id) throw new ErroAplicacao(409, 'AUTOR_INCOMPATIVEL', 'O pedido pertence a outro participante.');
+            if (!cena) await condutor.executar('/repetir', { participanteId: pedido.participante_id });
             const atual = await this.repositorio.carregar(id);
             return { campanha: apresentarCampanha(atual), cena: apresentarCena(atual.campanha.diario.find(item => item.id === corpo.pedido_id)) };
         });

@@ -33,7 +33,7 @@ As requisições HTTP usam JSON. Após o login, o navegador envia o cookie de se
 | `sala:pronto` | `sala_id`, `pronto` | Atualiza a prontidão. |
 | `sala:iniciar` | `sala_id` | Inicia a aventura. |
 | `sala:acao` | `sala_id`, `acao`, `turno_esperado`, `acao_id` | Resolve a ação e retorna a campanha. |
-| `sala:repetir` | `sala_id`, `pedido_id` | Retoma a narração da cena pendente do autor. |
+| `sala:repetir` | `sala_id`, `pedido_id` | Um jogador da sala retoma a narração da cena pendente, preservando o autor e o resultado oficial. |
 | `sala:descartar` | `sala_id`, `pedido_id` | Descarta a cena pendente do autor quando ainda não houve resolução mecânica. |
 
 O navegador gera `acao_id` no formato `acao_` seguido de 32 caracteres hexadecimais. Clientes antigos podem omiti-lo. Quando presente, o mesmo identificador só aceita o mesmo autor, turno e texto. O reconhecimento persiste após reiniciar o servidor.

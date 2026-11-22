@@ -6,6 +6,32 @@
   gap: 12px;
   margin-bottom: 12px;
 }
+.avatar-traits { margin-block: 8px 14px; }
+.avatar-trait-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.avatar-trait-groups button {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-height: 56px;
+  padding: 7px 10px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+.avatar-trait-groups span { color: var(--muted); font-size: 11px; font-weight: 400; }
+.avatar-trait-groups button[aria-expanded="true"] { background: #263229; border-color: var(--gold); }
+.avatar-trait-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #141d16;
+}
+.avatar-trait-panel button { padding: 6px 10px; min-height: 34px; font-size: 12px; }
+.avatar-trait-panel [aria-pressed="true"] { color: #25291d; background: var(--gold); border-color: var(--gold); }
 .avatar-selection {
   display: flex;
   flex-wrap: wrap;
@@ -16,7 +42,9 @@
 }
 .avatar-theme-field { display: grid; gap: 8px; }
 .avatar-selection p { margin: 0; font-size: 13px; }
-.avatar-selection button { padding: 8px 12px; font-size: 12px; }
+.avatar-description { margin-top: 12px; }
+.avatar-description summary { width: fit-content; cursor: pointer; color: var(--muted); font-size: 13px; }
+.avatar-description label { margin-top: 8px; }
 @media (max-width: 520px) {
   .avatar-filters { grid-template-columns: 1fr; }
 }

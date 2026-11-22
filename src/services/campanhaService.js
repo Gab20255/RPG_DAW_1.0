@@ -165,6 +165,22 @@ function vincularParticipante(campanha, mundo, id, ficha) {
     return validarCampanha(proxima, mundo);
 }
 
+function obterParticipanteDaVez(campanha) {
+    const ordem = campanha.participantes;
+    if (campanha.estado === 'concluida' || !ordem.length) return null;
+    const ultimo = campanha.diario.findLast(cena => cena.participante_id)?.participante_id;
+    const inicio = ordem.findIndex(participante => participante.id === ultimo) + 1;
+    const encontro = campanha.mecanica?.encontro;
+    for (let passo = 0; passo < ordem.length; passo++) {
+        const participante = ordem[(inicio + passo) % ordem.length];
+        if (encontro?.estado !== 'ativo') return participante;
+        const id = idJogador(participante.id);
+        if (encontro.participantes_ids.includes(id) && !encontro.agiram_ids.includes(id)
+            && !encontro.retirados_ids.includes(id) && campanha.mecanica.combatentes.some(ator => ator.id === id && ator.vida > 0)) return participante;
+    }
+    return null;
+}
+
 function registrarAcaoCampanha(campanha, mundo, entrada, { participanteId = null, cenaId, rolar } = {}) {
     campanha = migrarCampanha(campanha, mundo);
     conferirTexto(entrada, 1000, 'Ação');
@@ -184,8 +200,10 @@ function registrarAcaoCampanha(campanha, mundo, entrada, { participanteId = null
         resultado = resolverAcaoMecanica(estadoMecanico, acaoMecanica, participante, rolar);
         proxima.mecanica = structuredClone(resultado.depois);
         tipo = 'mecanica';
-    } else if (acao === '/observar') tipo = 'observacao';
-    else if (/^\/falar\s+\S/.test(acao)) tipo = 'dialogo';
+    } else if (acao === '/observar' || acao === '/passar') {
+        if (acao === '/passar' && estadoMecanico.encontro?.estado === 'ativo') throw new Error('Durante o combate, use /esperar para passar a vez.');
+        tipo = 'observacao';
+    } else if (/^\/falar\s+\S/.test(acao)) tipo = 'dialogo';
     else if (acao.startsWith('/ir ')) {
         if (estadoMecanico.encontro?.estado === 'ativo') throw new Error('Deslocamento entre ambientes indisponível durante combate.');
         if (estadoMecanico.combatentes.some(item => item.tipo === 'jogador' && !item.vida)) throw new Error('O grupo possui personagens incapacitados.');
@@ -282,7 +300,7 @@ function aplicarCena(campanha, mundo, resposta) {
     proxima.turno = pedido.turno;
     proxima.ambiente_id = pedido.ambiente_id;
     proxima.resumo = resposta.resumo.trim();
-    if (resposta.direcao.length && !proxima.direcao_definida) {
+    if (resposta.direcao.length && !proxima.direcao_definida && pedido.acao !== '/passar') {
         proxima.direcao = structuredClone(resposta.direcao[0]);
         proxima.direcao_definida = true;
         proxima.objetivos.find(item => item.id === 'objetivo_principal').descricao = proxima.direcao.objetivo;
@@ -306,23 +324,46 @@ function narrarCenaLocalmente(campanha, mundo) {
     const local = mundo.ambientes.find(item => item.id === pedido.ambiente_id);
     const participante = campanha.participantes.find(item => item.id === pedido.participante_id);
     const nome = participante?.ficha.nome || 'o grupo';
-    const { objetivo } = campanha.direcao;
-    let narracao = `Em ${local.nome}, ${nome} tem um momento para avaliar a situação. O objetivo continua o mesmo: ${objetivo}`;
+    const pista = campanha.memoria.pistas.at(-1);
+    const contato = mundo.personagens.find(item => item.ambiente_id === local.id);
+    const destinos = local.conexoes_ids.map(id => mundo.ambientes.find(item => item.id === id)).filter(Boolean);
+    const encaminhamento = pista
+        ? `O diário ainda guarda uma pista: ${pista.texto}`
+        : destinos.length ? `Há caminho para ${destinos.map(destino => destino.nome).join(' ou ')}.` : local.descricao;
+    let narracao = `${local.descricao} ${encaminhamento}`;
     if (pedido.resultado) narracao = pedido.resultado.resumo;
     else if (pedido.teste) {
         narracao = pedido.teste.sucesso
-            ? `Em ${local.nome}, ${nome} consegue pôr a abordagem em prática. Com o resultado em mãos, o grupo pode explorar o local ou buscar mais informações sobre o objetivo.`
-            : `Em ${local.nome}, a tentativa de ${participante?.ficha.nome || 'vocês'} não dá o resultado esperado. O grupo ainda pode mudar de abordagem e buscar outra forma de avançar.`;
-    } else if (pedido.tipo === 'transicao') narracao = `O grupo chega a ${local.nome}. ${local.descricao}`;
-    else if (pedido.tipo === 'observacao') narracao = `O grupo observa ${local.nome}. ${local.descricao}`;
+            ? `Em ${local.nome}, ${nome} consegue pôr a abordagem em prática. ${encaminhamento}`
+            : `Em ${local.nome}, a tentativa de ${participante?.ficha.nome || 'vocês'} não dá o resultado esperado. ${encaminhamento}`;
+    } else if (pedido.acao === '/passar') narracao = `${participante?.ficha.nome || 'O grupo'} passa a vez.`;
+    else if (pedido.tipo === 'transicao') narracao = `O grupo chega ao local: ${local.nome}. ${local.descricao}`;
+    else if (pedido.tipo === 'dialogo') narracao = `${contato?.descricao || local.descricao} ${encaminhamento}`;
     return {
         pedido_id: pedido.id, turno: pedido.turno, ambiente_id: pedido.ambiente_id,
         narracao, resumo: campanha.resumo,
-        escolhas: [], direcao: campanha.direcao_definida ? [] : [campanha.direcao],
+        escolhas: pedido.acao === '/passar' ? campanha.diario.at(-1)?.escolhas || [] : [],
+        direcao: campanha.direcao_definida ? [] : [campanha.direcao],
         fatos: [], pistas: [], acontecimentos: [], objetivos: [],
         novidades: Object.fromEntries(Object.keys(MODELO_CENA.novidades).map(tipo => [tipo, []])),
         exige_resolucao_mecanica: false, encerramento: { concluir: false, desfecho: '' },
     };
+}
+
+function filtrarEscolhasCena(resposta, pedido, mundo) {
+    if (!Array.isArray(resposta?.escolhas)) return resposta;
+    const local = mundo.ambientes.find(item => item.id === pedido.ambiente_id);
+    const acoes = new Set([chaveTexto(pedido.acao)]);
+    const escolhas = resposta.escolhas.filter(escolha => {
+        try { validarEscolhas([escolha]); }
+        catch { return false; }
+        const acao = chaveTexto(escolha.acao);
+        const destino = acao.match(/^\/ir\s+(\S+)$/)?.[1];
+        if (acoes.has(acao) || (acao.startsWith('/ir ') && !local.conexoes_ids.includes(destino))) return false;
+        acoes.add(acao);
+        return true;
+    }).slice(0, 3);
+    return { ...resposta, escolhas };
 }
 
 class CondutorCampanha {
@@ -358,8 +399,10 @@ class CondutorCampanha {
 
     async obterResposta(mundo, campanha) {
         const { montarContextoCampanha } = require('./contextoCampanhaService');
-        const contexto = montarContextoCampanha(mundo, campanha);
         const atual = obterMundoCampanha(mundo, campanha);
+        const pedido = campanha.pendente;
+        if (pedido.acao === '/passar') return narrarCenaLocalmente(campanha, atual);
+        const contexto = montarContextoCampanha(mundo, campanha);
         for (let tentativa = 1; tentativa <= 3; tentativa++) {
             let resposta;
             try {
@@ -368,7 +411,7 @@ class CondutorCampanha {
                 if (!errosDeCena.has(erro.code)) throw erro;
                 continue;
             }
-            try { return validarRespostaCena(resposta, campanha, atual); }
+            try { return validarRespostaCena(filtrarEscolhasCena(resposta, pedido, atual), campanha, atual); }
             catch { continue; }
         }
         return validarRespostaCena(narrarCenaLocalmente(campanha, atual), campanha, atual);
@@ -411,4 +454,4 @@ class CondutorCampanha {
     }
 }
 
-module.exports = { iniciarCampanha, migrarCampanha, vincularParticipante, obterMundoCampanha, validarCampanha, registrarAcaoCampanha, validarRespostaCena, aplicarCena, CondutorCampanha, errosDeCena };
+module.exports = { iniciarCampanha, migrarCampanha, vincularParticipante, obterMundoCampanha, obterParticipanteDaVez, validarCampanha, registrarAcaoCampanha, validarRespostaCena, aplicarCena, CondutorCampanha, errosDeCena };

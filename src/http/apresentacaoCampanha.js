@@ -1,4 +1,4 @@
-const { obterMundoCampanha } = require('../services/campanhaService');
+const { obterMundoCampanha, obterParticipanteDaVez } = require('../services/campanhaService');
 const { hashBaseCampanha } = require('../services/participantesCampanhaService');
 const { prepararEstadoMecanico, apresentarResultadoMecanico, idJogador } = require('../services/combateService');
 
@@ -56,6 +56,7 @@ function apresentarCampanha(mundo) {
         ...resumirCampanha(mundo),
         versao: campanha.versao, revisao: mundo.revisaoPersistencia ?? null, mundo_hash: hashBaseCampanha(mundo),
         abertura: mundo.historia.preludio, resumo: campanha.resumo, ambiente_id: campanha.ambiente_id,
+        participante_da_vez: campanha.pendente?.participante_id ?? obterParticipanteDaVez(campanha)?.id ?? null,
         direcao: selecionar(['conflito', 'objetivo', 'gancho'], campanha.direcao),
         direcao_definida: campanha.direcao_definida,
         objetivos: structuredClone(campanha.objetivos), memoria: structuredClone(campanha.memoria),

@@ -7,6 +7,7 @@ const { hashBaseCampanha } = require('./participantesCampanhaService');
 const { apresentarCampanha } = require('../http/apresentacaoCampanha');
 const { REGRAS, listarHabilidades } = require('../rules/habilidades');
 const { listarAvatares, sugerirAvatar, sugerirAvatarComIa } = require('./avataresService');
+const { FILTROS_AVATARES } = require('../data/catalogoAvatares');
 
 const MINIMO_JOGADORES = 2;
 const MAXIMO_JOGADORES = 8;
@@ -69,6 +70,7 @@ class Salas extends EmissorEventos {
             racas: publico.racas, itens_iniciais: publico.itens.filter(item => itensIniciais.has(item.id)),
             habilidades: listarHabilidades(REGRAS.nivelInicial),
             avatares: listarAvatares(mundo),
+            filtros_avatares: FILTROS_AVATARES,
         };
     }
 
@@ -204,7 +206,11 @@ class Salas extends EmissorEventos {
 
     agir(id, corpo, sessao) {
         validarCampos(corpo, ['acao', 'turno_esperado'], ['participante_id', 'acao_id', 'confirmar_rolagem']);
-        return this.enfileirar(id, sessao, sala => this.api.agir(sala.campanha_id, { ...corpo, participante_id: this.participante(sala, sessao, corpo.participante_id) }), { ativa: true, iniciada: true });
+        return this.enfileirar(id, sessao, sala => this.api.agir(
+            sala.campanha_id,
+            { ...corpo, participante_id: this.participante(sala, sessao, corpo.participante_id) },
+            { alternarVez: true },
+        ), { ativa: true, iniciada: true });
     }
 
     repetir(id, corpo, sessao) { return this.pendente(id, corpo, sessao, 'repetir'); }
@@ -212,7 +218,11 @@ class Salas extends EmissorEventos {
 
     pendente(id, corpo, sessao, operacao) {
         validarCampos(corpo, ['pedido_id'], ['participante_id']);
-        return this.enfileirar(id, sessao, sala => this.api[operacao](sala.campanha_id, { ...corpo, participante_id: this.participante(sala, sessao, corpo.participante_id) }), { ativa: true, iniciada: true });
+        return this.enfileirar(id, sessao, sala => this.api[operacao](
+            sala.campanha_id,
+            { ...corpo, participante_id: this.participante(sala, sessao, corpo.participante_id) },
+            { retomadaEmGrupo: operacao === 'repetir' },
+        ), { ativa: true, iniciada: true });
     }
 
     historico(id, consulta, sessao) { return this.api.historico(this.acessar(id, sessao).campanha_id, consulta); }

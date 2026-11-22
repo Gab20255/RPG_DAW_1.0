@@ -72,13 +72,65 @@ const grupos = {
     ],
 };
 
+const gruposVisuais = [
+    ['cabelo', 'Cabelo', [
+        ['loiro', 'Loiro', 'P20'],
+        ['ruivo', 'Ruivo', 'P02 P11 P40'],
+        ['castanho', 'Castanho', 'P01 P12 P32 P39 P44 P47 P51'],
+        ['preto', 'Preto ou escuro', 'P03 P05 P07 P08 P09 P13 P15 P17 P23 P24 P25 P26 P27 P29 P30 P36 P37 P38 P42 P46 P48 P49 P50 P53 P55 P56 P59'],
+        ['grisalho', 'Grisalho ou branco', 'P04 P06 P16 P18 P19 P21 P22 P28 P31 P41 P43 P52 P54 P58 P60'],
+        ['raspado', 'Raspado', 'P17 P23 P25 P33 P45 P57 P59'],
+        ['preso', 'Preso', 'P03 P05 P09 P12 P18 P22 P26 P28 P32 P38 P41 P44 P50 P52 P55'],
+        ['longo', 'Longo', 'P02 P04 P07 P15'],
+        ['trancas', 'Tranças', 'P05 P15 P50'],
+        ['coberto', 'Capuz, chapéu ou turbante', 'P02 P10 P14 P54'],
+        ['sem-cabelo', 'Sem cabelo visível', 'P33 P34 P35 P45 P57'],
+    ]],
+    ['rosto', 'Rosto', [
+        ['barba', 'Com barba', 'P01 P04 P06 P10 P11 P14 P16 P19 P24 P31 P37 P42 P45 P51 P54'],
+        ['sem-barba', 'Sem barba', 'P02 P03 P05 P07 P08 P09 P12 P13 P15 P17 P18 P20 P21 P22 P23 P25 P26 P27 P28 P29 P30 P32 P33 P36 P38 P39 P40 P41 P43 P44 P46 P47 P48 P49 P50 P52 P53 P55 P56 P57 P58 P59 P60'],
+        ['oculos', 'Óculos ou proteção', 'P06 P16 P21 P26 P37 P41 P43 P50 P58'],
+        ['cicatriz', 'Cicatriz', 'P13'],
+        ['elfico', 'Orelhas pontudas', 'P07 P22'],
+        ['presas', 'Presas', 'P08'],
+        ['implante', 'Implante', 'P30 P36'],
+        ['robotico', 'Robótico', 'P34'],
+        ['alienigena', 'Alienígena', 'P35'],
+    ]],
+    ['roupa', 'Roupa', [
+        ['tecnologica', 'Roupa tecnológica', 'P25 P26 P27 P28 P30 P31 P34 P57'],
+        ['armadura', 'Armadura', 'P01 P08 P13 P23 P25 P49 P56'],
+        ['manto', 'Capa ou manto', 'P02 P03 P05 P07 P11 P14 P15 P22 P58'],
+        ['casaco', 'Casaco ou jaqueta', 'P09 P17 P18 P19 P24 P26 P29 P30 P31 P35 P37 P39 P42 P44 P45 P47 P48 P50 P55 P60'],
+        ['rustica', 'Roupa rústica', 'P04 P06 P10 P11 P12 P16 P20 P21 P24 P51 P52 P54 P58 P59'],
+        ['uniforme', 'Uniforme ou jaleco', 'P25 P28 P33 P34 P38 P40 P41 P57'],
+        ['avental', 'Avental', 'P06 P21 P46 P52'],
+        ['equipamento', 'Colete ou equipamento de campo', 'P25 P26 P27 P29 P31 P32 P34 P36 P38 P42 P44 P49 P50 P51 P53 P54 P55 P56 P57 P59'],
+    ]],
+];
+
+const FILTROS_AVATARES = Object.freeze(gruposVisuais.map(([id, rotulo, opcoes]) => Object.freeze({
+    id, rotulo, opcoes: Object.freeze(opcoes.map(([id, rotulo]) => Object.freeze({ id, rotulo }))),
+})));
+
+const tracosPorRetrato = new Map();
+for (const [, , opcoes] of gruposVisuais) {
+    for (const [traco, , retratos] of opcoes) {
+        for (const id of retratos.split(' ')) {
+            if (!tracosPorRetrato.has(id)) tracosPorRetrato.set(id, []);
+            tracosPorRetrato.get(id).push(traco);
+        }
+    }
+}
+
 const arquivosPng = new Set(['P01', 'P02', 'P03', 'P04', 'P13', 'P14', 'P15', 'P16']);
 
 const CATALOGO_AVATARES = Object.freeze(Object.entries(grupos).flatMap(([base_id, retratos]) =>
     retratos.map(([id, nome, descricao, papeis]) => Object.freeze({
         id, nome, descricao, base_id,
         papeis: Object.freeze(papeis.split(', ')),
+        tracos: Object.freeze(tracosPorRetrato.get(id) || []),
         url: `/avatares/${id}.${arquivosPng.has(id) ? 'png' : 'jpeg'}`,
     }))));
 
-module.exports = { CATALOGO_AVATARES };
+module.exports = { CATALOGO_AVATARES, FILTROS_AVATARES };

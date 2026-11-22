@@ -51,10 +51,12 @@
             </div>
             <p id="class-description" class="muted"></p>
             <div id="class-attributes" class="attributes"></div>
-            <label>Aparência<textarea name="descricao_visual" required minlength="10" maxlength="1000" rows="3" placeholder="Cabelos, roupas e características marcantes…"></textarea></label>
-            <fieldset><legend id="skills-label">Habilidades</legend><div id="skill-options" class="skill-options"></div></fieldset>
             <fieldset>
-              <legend>Seu retrato</legend>
+              <legend>Aparência</legend>
+              <div id="avatar-traits" class="avatar-traits">
+                <div id="avatar-trait-groups" class="avatar-trait-groups" aria-label="Traços do retrato" role="group"></div>
+                <div id="avatar-trait-options"></div>
+              </div>
               <div class="avatar-filters">
                 <label>Buscar retrato<input id="avatar-search" type="search" maxlength="120" placeholder="Nome, aparência ou código" autocomplete="off" aria-controls="avatar-options"></label>
                 <div class="avatar-theme-field">
@@ -69,10 +71,16 @@
               <div id="avatar-options" class="avatar-options"></div>
               <div class="avatar-selection">
                 <p id="avatar-selected" class="muted" role="status"></p>
-                <button type="button" id="suggest-avatar" class="quiet">Sugerir pela aparência</button>
               </div>
+              <details class="avatar-description">
+                <summary>Personalizar descrição (opcional)</summary>
+                <label>Descrição da aparência
+                  <textarea name="descricao_visual" minlength="10" maxlength="1000" rows="3" placeholder="Acrescente detalhes à aparência do personagem…"></textarea>
+                </label>
+              </details>
             </fieldset>
-            <button class="primary" type="submit">Salvar personagem</button>
+            <fieldset><legend id="skills-label">Habilidades</legend><div id="skill-options" class="skill-options"></div></fieldset>
+            <button id="save-character" class="primary" type="submit" disabled>Salvar personagem</button>
           </form>
         </div>
         <aside class="stack">
@@ -120,6 +128,7 @@
                 <p id="ending" class="prose" hidden></p>
                 <form id="action-form" tabindex="-1" data-mode="livre">
                   <h3>Seu próximo passo</h3>
+                  <p id="turn-owner" class="turn-owner" role="status"></p>
                   <div id="story-choices" class="story-choices" role="group" aria-label="Escolhas da história"></div>
                   <div class="action-modes" role="group" aria-label="Tipo de ação">
                     <button type="button" data-action-mode="livre" class="quiet" aria-pressed="true">Complementar</button>
@@ -135,6 +144,7 @@
                   <div class="actions">
                     <div class="explore-actions">
                       <button id="observe" type="button" class="quiet">Observar</button>
+                      <button id="pass-turn" type="button" class="quiet">Passar a vez</button>
                       <a id="action-routes-link" href="#table-map" hidden>Ver rotas</a>
                     </div>
                     <button id="action-submit" class="primary" type="submit">Enviar ação →</button>
@@ -168,6 +178,10 @@
               <section class="table-objectives" aria-labelledby="objectives-title">
                 <h2 id="objectives-title">Objetivos</h2>
                 <div id="objectives"></div>
+                <div id="campaign-clues" class="campaign-clues" hidden>
+                  <h3>Pistas recentes</h3>
+                  <ul id="clues-list"></ul>
+                </div>
               </section>
             </aside>
           </div>

@@ -30,8 +30,9 @@ function montarContextoCampanha(mundo, campanha) {
     const memoria = Object.fromEntries(['fatos', 'pistas', 'decisoes', 'acontecimentos'].map(tipo => [tipo,
         selecionarRelevantes(campanha.memoria[tipo], consulta, tipo === 'fatos' ? 14 : tipo === 'pistas' ? 8 : 4),
     ]));
-    const recentes = campanha.diario.slice(-2);
-    const antiga = selecionarRelevantes(campanha.diario.slice(0, -2), pedido.acao, 1);
+    const cenas = campanha.diario.filter(cena => cena.acao !== '/passar');
+    const recentes = cenas.slice(-3);
+    const antiga = selecionarRelevantes(cenas.slice(0, -3), pedido.acao, 1);
     const contexto = {
         campanha_id: campanha.id,
         premissa: {

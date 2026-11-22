@@ -423,12 +423,18 @@ main:has(.room-playing:not([hidden])) {
   background: #362b20;
   color: #f1dab0;
 }
+.table-journal .scene-entry .result--test { text-align: center; white-space: normal; }
 .table-journal .scene-entry .result--success { border-color: #83a468; background: #273023; color: #cfdfbc; }
 .table-journal .scene-entry .result--failure { border-color: #ca816d; background: #3b2821; color: #f6c9b8; }
 .table-journal small, .table-objectives small { color: var(--table-muted); }
 .table-journal #action-input { background: #17130f; border-color: #6f563c; }
 .table-journal #action-input::placeholder { color: #9d907d; }
 .table-journal #action-form { gap: 12px; }
+.turn-owner { margin: 0; color: var(--table-brass); font-size: 14px; }
+.turn-owner[data-vez="sua"] { color: #d9e7b8; font-weight: 700; }
+.campaign-clues { margin-top: 16px; }
+.campaign-clues ul { margin: 0; padding-left: 18px; color: var(--table-muted); font-size: 13px; line-height: 1.6; }
+.campaign-clues li + li { margin-top: 6px; }
 .action-attribute-field { display: grid; gap: 8px; }
 .table-journal #action-attribute { max-width: 260px; border-color: #6f563c; background: #17130f; }
 .action-modes, .explore-actions {
