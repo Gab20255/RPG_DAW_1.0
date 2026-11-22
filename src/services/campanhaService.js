@@ -7,6 +7,8 @@ const { prepararFichaCampanha, validarParticipantes, validarIdentificador, obter
 const { iniciarMecanica, prepararEstadoMecanico, conferirOrigens, resolverAcaoMecanica, validarResultadoMecanico, idJogador } = require('./combateService');
 const { interpretarAcaoMecanica } = require('./interpretacaoAcaoService');
 
+const errosDeCena = new Set(['CENA_INVALIDA', 'CENA_TRUNCADA', 'CENA_VAZIA']);
+
 function iniciarCampanha(mundo) {
     validarMundo(mundo);
     const direcao = mundo.historia.direcao ? structuredClone(validarDirecao(mundo.historia.direcao)) : {
@@ -299,6 +301,30 @@ function aplicarCena(campanha, mundo, resposta) {
     return validarCampanha(proxima, mundo);
 }
 
+function narrarCenaLocalmente(campanha, mundo) {
+    const pedido = campanha.pendente;
+    const local = mundo.ambientes.find(item => item.id === pedido.ambiente_id);
+    const participante = campanha.participantes.find(item => item.id === pedido.participante_id);
+    const nome = participante?.ficha.nome || 'o grupo';
+    const { objetivo } = campanha.direcao;
+    let narracao = `Em ${local.nome}, ${nome} tem um momento para avaliar a situação. O objetivo continua o mesmo: ${objetivo}`;
+    if (pedido.resultado) narracao = pedido.resultado.resumo;
+    else if (pedido.teste) {
+        narracao = pedido.teste.sucesso
+            ? `Em ${local.nome}, ${nome} consegue pôr a abordagem em prática. Com o resultado em mãos, o grupo pode explorar o local ou buscar mais informações sobre o objetivo.`
+            : `Em ${local.nome}, a tentativa de ${participante?.ficha.nome || 'vocês'} não dá o resultado esperado. O grupo ainda pode mudar de abordagem e buscar outra forma de avançar.`;
+    } else if (pedido.tipo === 'transicao') narracao = `O grupo chega a ${local.nome}. ${local.descricao}`;
+    else if (pedido.tipo === 'observacao') narracao = `O grupo observa ${local.nome}. ${local.descricao}`;
+    return {
+        pedido_id: pedido.id, turno: pedido.turno, ambiente_id: pedido.ambiente_id,
+        narracao, resumo: campanha.resumo,
+        escolhas: [], direcao: campanha.direcao_definida ? [] : [campanha.direcao],
+        fatos: [], pistas: [], acontecimentos: [], objetivos: [],
+        novidades: Object.fromEntries(Object.keys(MODELO_CENA.novidades).map(tipo => [tipo, []])),
+        exige_resolucao_mecanica: false, encerramento: { concluir: false, desfecho: '' },
+    };
+}
+
 class CondutorCampanha {
     constructor({ carregar, salvar, consultar, rolar, aoResultado = () => {} }) {
         this.carregar = carregar;
@@ -316,8 +342,8 @@ class CondutorCampanha {
         return operacao;
     }
 
-    executar(entrada, { participanteId = null, cenaId } = {}) {
-        return this.enfileirar(() => this.processar(entrada, participanteId, cenaId));
+    executar(entrada, { participanteId = null, cenaId, rolar = this.rolar } = {}) {
+        return this.enfileirar(() => this.processar(entrada, participanteId, cenaId, rolar));
     }
 
     vincular(id, ficha) {
@@ -330,8 +356,25 @@ class CondutorCampanha {
         });
     }
 
-    async processar(entrada, participanteId, cenaId) {
+    async obterResposta(mundo, campanha) {
         const { montarContextoCampanha } = require('./contextoCampanhaService');
+        const contexto = montarContextoCampanha(mundo, campanha);
+        const atual = obterMundoCampanha(mundo, campanha);
+        for (let tentativa = 1; tentativa <= 3; tentativa++) {
+            let resposta;
+            try {
+                resposta = await this.consultar(contexto, tentativa);
+            } catch (erro) {
+                if (!errosDeCena.has(erro.code)) throw erro;
+                continue;
+            }
+            try { return validarRespostaCena(resposta, campanha, atual); }
+            catch { continue; }
+        }
+        return validarRespostaCena(narrarCenaLocalmente(campanha, atual), campanha, atual);
+    }
+
+    async processar(entrada, participanteId, cenaId, rolar) {
         const { mundo, campanha: salva } = await this.carregar();
         let campanha = migrarCampanha(salva || iniciarCampanha(mundo), mundo);
         if (['/repetir', '/descartar'].includes(entrada) && campanha.pendente && participanteId !== null && participanteId !== campanha.pendente.participante_id) throw new Error('A cena pendente pertence a outro participante.');
@@ -347,16 +390,14 @@ class CondutorCampanha {
             return { campanha, narracao: campanha.diario.at(-1)?.narracao || mundo.historia.preludio };
         }
         if (entrada !== '/repetir') {
-            campanha = registrarAcaoCampanha(campanha, mundo, entrada, { participanteId, cenaId, rolar: this.rolar });
+            campanha = registrarAcaoCampanha(campanha, mundo, entrada, { participanteId, cenaId, rolar });
             await this.salvar(campanha, cenaId);
         }
         const pedido = campanha.pendente;
         if (pedido.teste || pedido.resultado) await this.aoResultado(structuredClone(pedido));
         let resposta = pedido.resposta || this.respostas.get(pedido.id);
         if (!resposta) {
-            resposta = await this.consultar(montarContextoCampanha(mundo, campanha));
-            try { validarRespostaCena(resposta, campanha, obterMundoCampanha(mundo, campanha)); }
-            catch (erro) { erro.code ||= 'CENA_INVALIDA'; throw erro; }
+            resposta = await this.obterResposta(mundo, campanha);
             this.respostas.set(pedido.id, structuredClone(resposta));
         }
         if (!pedido.resposta) {
@@ -370,4 +411,4 @@ class CondutorCampanha {
     }
 }
 
-module.exports = { iniciarCampanha, migrarCampanha, vincularParticipante, obterMundoCampanha, validarCampanha, registrarAcaoCampanha, validarRespostaCena, aplicarCena, CondutorCampanha };
+module.exports = { iniciarCampanha, migrarCampanha, vincularParticipante, obterMundoCampanha, validarCampanha, registrarAcaoCampanha, validarRespostaCena, aplicarCena, CondutorCampanha, errosDeCena };

@@ -1,6 +1,6 @@
 const { RepositorioCampanhas, validarIdCampanha } = require('../repositorios/campanhasRepositorio');
 const { iniciarMundoPorBase, listarBases, validarPedidoBase } = require('./basesRpgService');
-const { CondutorCampanha } = require('./campanhaService');
+const { CondutorCampanha, errosDeCena } = require('./campanhaService');
 const { obterParticipante, prepararFichaCampanha } = require('./participantesCampanhaService');
 const ServicoModelo = require('./geminiService');
 const { obterConfiguracao } = require('./configuracaoService');
@@ -20,7 +20,6 @@ function validarAutor(campanha, id) {
 
 function tratarErro(erro) {
     if (erro instanceof ErroAplicacao) return erro;
-    if (/^CENA_/.test(erro.code || '')) return new ErroAplicacao(502, 'RESPOSTA_IA_INVALIDA', 'A resposta da IA não passou pela validação; a cena permanece pendente.');
     if (erro.code || erro instanceof TypeError || erro instanceof ReferenceError || erro instanceof SyntaxError) return new ErroAplicacao(500, 'FALHA_INTERNA', 'Não foi possível concluir a operação.');
     return new ErroAplicacao(422, 'OPERACAO_INVALIDA', erro.message);
 }
@@ -40,15 +39,14 @@ class ApiCampanhas extends EventEmitter {
         catch { throw new ErroAplicacao(503, 'IA_NAO_CONFIGURADA', 'Configuração da IA indisponível no servidor.'); }
     }
 
-    async consultar(contexto) {
+    async consultar(contexto, tentativa) {
         try {
-            this.emit('narracao', { campanha_id: contexto.campanha_id, cena_id: contexto.pedido.id, texto: '' });
-            return await this.obterServico().continuarCampanha(contexto, texto => {
-                this.emit('narracao', { campanha_id: contexto.campanha_id, cena_id: contexto.pedido.id, texto });
-            });
+            const publicar = texto => this.emit('narracao', { campanha_id: contexto.campanha_id, cena_id: contexto.pedido.id, texto, tentativa });
+            publicar('');
+            return await this.obterServico().continuarCampanha(contexto, publicar, tentativa);
         }
         catch (erro) {
-            if (erro instanceof ErroAplicacao) throw erro;
+            if (erro instanceof ErroAplicacao || errosDeCena.has(erro.code)) throw erro;
             if (erro.status === 429) throw new ErroAplicacao(429, 'LIMITE_IA', 'Limite de requisições da IA atingido.');
             if (erro.status === 402) throw new ErroAplicacao(402, 'CREDITO_IA', 'Crédito ou limite da chave da IA insuficiente.');
             if ([401, 403].includes(erro.status)) throw new ErroAplicacao(503, 'IA_NAO_CONFIGURADA', 'Credencial da IA recusada pelo provedor.');
@@ -65,7 +63,7 @@ class ApiCampanhas extends EventEmitter {
             const condutor = new CondutorCampanha({
                 carregar: async () => { const mundo = await this.repositorio.carregar(id); revisao = mundo.revisaoPersistencia; return { mundo, campanha: mundo.campanha }; },
                 salvar: async (campanha, cenaId) => { const mundo = await this.repositorio.salvar(id, campanha, { revisao, cenaId }); revisao = mundo.revisaoPersistencia; return mundo; },
-                consultar: contexto => this.consultar(contexto), rolar: this.rolar,
+                consultar: (contexto, tentativa) => this.consultar(contexto, tentativa), rolar: this.rolar,
             });
             this.sessoes.set(id, { condutor, fila: Promise.resolve() });
         }
@@ -77,6 +75,7 @@ class ApiCampanhas extends EventEmitter {
         const operacao = sessao.fila.then(async () => {
             try { return await tarefa(sessao.condutor, await this.repositorio.carregar(id)); }
             catch (erro) {
+                if (erro.codigo === 'ROLAGEM_NECESSARIA') throw erro;
                 const publico = tratarErro(erro);
                 const mundo = await this.repositorio.carregar(id).catch(() => null);
                 if (mundo?.campanha.pendente) this.emit('narracao', { campanha_id: id, cena_id: mundo.campanha.pendente.id, erro: true, texto: '' });
@@ -110,10 +109,11 @@ class ApiCampanhas extends EventEmitter {
     }
 
     async agir(id, corpo) {
-        validarCorpo(corpo, ['acao', 'turno_esperado'], ['participante_id', 'acao_id']);
+        validarCorpo(corpo, ['acao', 'turno_esperado'], ['participante_id', 'acao_id', 'confirmar_rolagem']);
         if (typeof corpo.acao !== 'string' || !corpo.acao.trim() || corpo.acao.length > 1000 || !Number.isSafeInteger(corpo.turno_esperado) || corpo.turno_esperado < 0) throw new ErroAplicacao(400, 'ACAO_INVALIDA', 'Ação ou turno esperado inválido.');
         const acao = corpo.acao.trim();
-        const { acao_id: cenaId, turno_esperado: turnoEsperado, participante_id: participanteId = null } = corpo;
+        const { acao_id: cenaId, turno_esperado: turnoEsperado, participante_id: participanteId = null, confirmar_rolagem: confirmouRolagem = true } = corpo;
+        if (typeof confirmouRolagem !== 'boolean') throw new ErroAplicacao(400, 'ACAO_INVALIDA', 'Confirmação da rolagem inválida.');
         if (cenaId !== undefined && (typeof cenaId !== 'string' || !/^acao_[a-f0-9]{32}$/.test(cenaId) || !this.repositorio.obterPedidoAcao)) throw new ErroAplicacao(400, 'ID_ACAO_INVALIDO', 'Identificador da ação inválido.');
         if (['/repetir', '/descartar'].includes(acao)) throw new ErroAplicacao(400, 'ROTA_INCOMPATIVEL', 'Use a rota específica para repetir ou descartar uma cena.');
         return this.alterar(id, async (condutor, mundo) => {
@@ -128,7 +128,10 @@ class ApiCampanhas extends EventEmitter {
             if (campanha.pendente) throw new ErroAplicacao(409, 'CENA_PENDENTE', 'Há uma cena pendente de conclusão.');
             if (campanha.estado === 'concluida') throw new ErroAplicacao(409, 'CAMPANHA_CONCLUIDA', 'Campanha concluída.');
             validarAutor(campanha, participanteId);
-            await condutor.executar(acao, { participanteId, cenaId });
+            const rolar = confirmouRolagem ? undefined : () => {
+                throw new ErroAplicacao(409, 'ROLAGEM_NECESSARIA', 'Role o D20 para continuar.');
+            };
+            await condutor.executar(acao, { participanteId, cenaId, rolar });
             return this.carregar(id);
         });
     }

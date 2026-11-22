@@ -144,17 +144,19 @@
               </section>
             </div>
             <aside class="table-sidebar">
-              <section id="table-dice" class="table-dice" aria-labelledby="dice-title" tabindex="-1">
-                <div class="dice-heading"><h2 id="dice-title">Bandeja de dados</h2><span>D20</span></div>
-                <div id="dice-stage" class="dice-stage"></div>
-                <div class="dice-readout" role="status" aria-atomic="true">
-                  <p id="dice-status" class="dice-status">Aguardando uma rolagem da partida.</p>
-                  <div id="dice-summary" class="dice-summary" hidden>
-                    <strong id="dice-verdict" class="dice-verdict"></strong>
-                    <p id="dice-result" class="dice-result"></p>
+              <div id="dice-dock">
+                <section id="table-dice" class="table-dice" aria-labelledby="dice-title" tabindex="-1">
+                  <div class="dice-heading"><h2 id="dice-title">Bandeja de dados</h2><span>D20</span></div>
+                  <div id="dice-stage" class="dice-stage"></div>
+                  <div class="dice-readout" role="status" aria-atomic="true">
+                    <p id="dice-status" class="dice-status">Aguardando uma rolagem da partida.</p>
+                    <div id="dice-summary" class="dice-summary" hidden>
+                      <strong id="dice-verdict" class="dice-verdict"></strong>
+                      <p id="dice-result" class="dice-result"></p>
+                    </div>
                   </div>
-                </div>
-              </section>
+                </section>
+              </div>
               <section id="table-sheet" class="table-sheet" aria-labelledby="sheet-title" tabindex="-1">
                 <h2 id="sheet-title">Sua ficha</h2>
                 <div id="my-character"></div>
@@ -170,6 +172,15 @@
             </aside>
           </div>
         </div>
+        <dialog id="dice-modal" class="dice-modal" aria-labelledby="roll-title" aria-describedby="roll-help">
+          <h2 id="roll-title">Teste de D20</h2>
+          <p id="roll-help" role="status">A ação precisa de uma rolagem.</p>
+          <div id="dice-modal-stage"></div>
+          <div class="dice-modal-actions">
+            <button id="cancel-roll" type="button" class="quiet">Cancelar</button>
+            <button id="roll-d20" type="button" class="primary">Rolar D20</button>
+          </div>
+        </dialog>
         <nav class="table-mobile-nav" aria-label="Atalhos da mesa">
           <a href="#table-map">Mapa</a>
           <a href="#table-journal">Diário</a>

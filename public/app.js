@@ -19,10 +19,13 @@ let escolhaAtual = null;
 let turnoEscolhas = '';
 let bandejaD20;
 let geracaoBandeja;
+let pedidoRolagem = null;
+let fecharDadoAutomaticamente;
 function notice(message = '', error = false) { $('#notice').textContent = message; $('#notice').hidden = !message; $('#notice').classList.toggle('error', error); }
 function show(screen) {
     if (screen !== 'room') narracaoEmCurso = null;
     if (screen !== 'room') {
+        fecharRolagem();
         bandejaD20?.encerrar();
         bandejaD20 = undefined;
     }
@@ -62,6 +65,15 @@ function lockControls() {
     $('#start-game').disabled = state.busy || !room?.preparacao.pronta_para_iniciar;
     const canAct = !state.busy && state.synced && !!state.socket?.connected && room?.ativa && room.etapa === 'em_andamento' && campaign?.estado !== 'concluida' && !campaign?.pendente;
     document.querySelectorAll('#action-form button, #action-form select, #action-input, #destinations button').forEach(el => { el.disabled = !canAct; });
+    if (pedidoRolagem?.etapa === 'aguardando') {
+        if (pedidoRolagem.generation !== state.generation || pedidoRolagem.turno !== campaign?.turno || campaign?.pendente || !room?.ativa) fecharRolagem();
+        else {
+            const botao = $('#roll-d20');
+            const habilitar = canAct && botao.disabled;
+            botao.disabled = !canAct;
+            if (habilitar) botao.focus();
+        }
+    }
     const mine = campaign?.pendente?.participante_id === `usuario_${state.user?.id}`;
     $('#retry').disabled = state.busy || !state.synced || !state.socket?.connected || !mine || !room?.ativa;
     $('#discard').disabled = $('#retry').disabled || !!campaign?.pendente?.teste || !!campaign?.pendente?.resultado;
@@ -295,12 +307,50 @@ function renderSceneArt(scene) {
     };
     imagem.src = url;
 }
+function abrirRolagem(pedido) {
+    const dialogo = $('#dice-modal');
+    const bandeja = $('#table-dice');
+    pedidoRolagem = { ...pedido, etapa: 'aguardando' };
+    $('#dice-dock').style.minHeight = bandeja.offsetHeight + 'px';
+    $('#dice-modal-stage').append(bandeja);
+    dialogo.dataset.etapa = 'aguardando';
+    $('#roll-help').textContent = 'A ação precisa de uma rolagem.';
+    $('#cancel-roll').textContent = 'Cancelar';
+    $('#cancel-roll').hidden = false;
+    $('#roll-d20').hidden = false;
+    $('#roll-d20').disabled = true;
+    dialogo.showModal();
+}
+function fecharRolagem() {
+    if (!pedidoRolagem) return;
+    pedidoRolagem = null;
+    clearTimeout(fecharDadoAutomaticamente);
+    const encaixe = $('#dice-dock');
+    encaixe.append($('#table-dice'));
+    encaixe.style.minHeight = '';
+    $('#dice-modal').close();
+}
+function concluirRolagem(cenaId) {
+    if (pedidoRolagem?.acaoId !== cenaId) return;
+    pedidoRolagem.etapa = 'concluida';
+    $('#dice-modal').dataset.etapa = 'concluida';
+    $('#roll-help').textContent = 'Resultado da rolagem';
+    const voltar = $('#cancel-roll');
+    voltar.textContent = 'Voltar à mesa';
+    voltar.hidden = false;
+    voltar.focus();
+    fecharDadoAutomaticamente = setTimeout(fecharRolagem, 2000);
+}
 function sincronizarDadoDaMesa(campanha, animar) {
     const novaMesa = !bandejaD20 || geracaoBandeja !== state.generation;
     if (novaMesa) {
         bandejaD20?.encerrar();
-        bandejaD20 = new BandejaD20($('#table-dice'));
+        bandejaD20 = new BandejaD20($('#table-dice'), concluirRolagem);
         geracaoBandeja = state.generation;
+    }
+    if (pedidoRolagem?.etapa === 'enviando' && campanha.ultima_rolagem?.cena_id === pedidoRolagem.acaoId) {
+        pedidoRolagem.etapa = 'rolando';
+        $('#dice-modal').dataset.etapa = 'rolando';
     }
     bandejaD20.sincronizar(campanha.ultima_rolagem, animar && !novaMesa);
 }
@@ -349,7 +399,7 @@ function renderNarracao() {
     const ativa = !!pendente && !!trecho && !trecho.erro;
     $('#live-scene').hidden = !ativa;
     $('#live-text').textContent = ativa ? trecho.texto : '';
-    $('#live-title').textContent = trecho?.texto ? 'O Mestre narra' : 'O Mestre prepara a cena';
+    $('#live-title').textContent = trecho?.texto ? 'O Mestre narra' : trecho?.tentativa > 1 ? 'O Mestre reformula a cena' : 'O Mestre prepara a cena';
     $('#pending').hidden = !pendente || ativa;
 }
 function renderEscolhas() {
@@ -523,19 +573,24 @@ async function recuperarConfirmacao() {
         if (state.socket?.connected) state.socket.disconnect().connect();
     }
 }
-async function sendAction(action, doFormulario = false) {
-    const id = state.room.id, generation = state.generation;
-    const formulario = doFormulario ? { texto: $('#action-input').value, modo: $('#action-form').dataset.mode } : null;
-    const turno = state.campaign.turno;
+async function sendAction(action, doFormulario = false, confirmacao) {
+    const { id, generation, turno, formulario } = confirmacao || {
+        id: state.room.id, generation: state.generation, turno: state.campaign.turno,
+        formulario: doFormulario ? { texto: $('#action-input').value, modo: $('#action-form').dataset.mode } : null,
+    };
     const anterior = envioSemConfirmacao;
-    const acaoId = anterior?.geracao === generation && anterior.turno === turno + 1 && anterior.acao === action
+    const acaoId = confirmacao?.acaoId || (anterior?.geracao === generation && anterior.turno === turno + 1 && anterior.acao === action
         ? anterior.id
-        : 'acao_' + Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+        : 'acao_' + Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join(''));
     envioSemConfirmacao = null;
     let resposta;
     try {
-        resposta = await ack('sala:acao', { sala_id: id, acao: action, turno_esperado: turno, acao_id: acaoId }, PRAZO_ACAO_MS);
+        resposta = await ack('sala:acao', { sala_id: id, acao: action, turno_esperado: turno, acao_id: acaoId, confirmar_rolagem: !!confirmacao }, PRAZO_ACAO_MS);
     } catch (erro) {
+        if (erro.code === 'ROLAGEM_NECESSARIA' && !confirmacao) {
+            if (generation === state.generation && turno === state.campaign.turno && !state.campaign.pendente) abrirRolagem({ id, generation, turno, formulario, acaoId, action });
+            return;
+        }
         if (erro.code !== 'CONFIRMACAO_INDISPONIVEL' || generation !== state.generation) throw erro;
         envioSemConfirmacao = { id: acaoId, geracao: generation, turno: turno + 1, acao: action, formulario };
         await recuperarConfirmacao();
@@ -616,6 +671,24 @@ $('#action-form').onsubmit = event => {
         return;
     }
     run(() => sendAction(acao, true));
+};
+$('#dice-modal').oncancel = event => {
+    event.preventDefault();
+    if (['aguardando', 'concluida'].includes(pedidoRolagem?.etapa)) fecharRolagem();
+};
+$('#cancel-roll').onclick = fecharRolagem;
+$('#roll-d20').onclick = () => {
+    const pedido = pedidoRolagem;
+    if (pedido?.etapa !== 'aguardando' || state.busy || !state.synced) return;
+    pedido.etapa = 'enviando';
+    $('#dice-modal').dataset.etapa = 'enviando';
+    $('#roll-help').textContent = 'Rolando D20…';
+    $('#roll-d20').hidden = true;
+    $('#cancel-roll').hidden = true;
+    run(async () => {
+        try { await sendAction(pedido.action, false, pedido); }
+        finally { if (pedidoRolagem === pedido && pedido.etapa === 'enviando') fecharRolagem(); }
+    });
 };
 $('#observe').onclick = () => run(() => sendAction('/observar'), 'Observando o ambiente…');
 for (const [selector, route] of [['#retry','repetir'], ['#discard','descartar']]) $(selector).onclick = () => run(async () => {

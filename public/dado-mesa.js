@@ -1,13 +1,14 @@
 'use strict';
 
 class BandejaD20 {
-    constructor(bandeja) {
+    constructor(bandeja, aoConcluir = () => {}) {
         this.bandeja = bandeja;
         this.palco = bandeja.querySelector('#dice-stage');
         this.status = bandeja.querySelector('#dice-status');
         this.resumo = bandeja.querySelector('#dice-summary');
         this.desfecho = bandeja.querySelector('#dice-verdict');
         this.resultado = bandeja.querySelector('#dice-result');
+        this.aoConcluir = aoConcluir;
         this.fila = [];
         this.cenaId = null;
         this.processando = false;
@@ -32,7 +33,7 @@ class BandejaD20 {
         if (!rolagens.length) return;
         this.cenaId = cena.cena_id;
         if (!animar) this.fila.length = 0;
-        this.fila.push({ turno: cena.turno, rolagens, animar });
+        this.fila.push({ cenaId: cena.cena_id, turno: cena.turno, rolagens, animar });
         this.processarFila();
     }
 
@@ -40,7 +41,7 @@ class BandejaD20 {
         if (this.processando) return;
         this.processando = true;
         while (this.fila.length && !this.encerrada) {
-            const { turno, rolagens, animar } = this.fila.shift();
+            const { cenaId, turno, rolagens, animar } = this.fila.shift();
             const indiceInicial = animar && this.dado ? 0 : rolagens.length - 1;
             for (let indice = indiceInicial; indice < rolagens.length; indice++) {
                 if (this.encerrada || this.fila[0]?.animar === false) break;
@@ -54,6 +55,7 @@ class BandejaD20 {
 
                 this.mostrarResultado(rolagem, turno, indice, rolagens.length, animar);
             }
+            this.aoConcluir(cenaId);
         }
         this.processando = false;
     }

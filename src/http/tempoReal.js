@@ -74,7 +74,7 @@ function conectarTempoReal(servidor, { autenticacao, salas, api, limitador }) {
             return { sala: await salas.iniciar(corpo.sala_id, {}, socket.data.sessao) };
         });
         for (const [evento, metodo, campos, opcionais = []] of [
-            ['sala:acao', 'agir', ['acao', 'turno_esperado'], ['acao_id']],
+            ['sala:acao', 'agir', ['acao', 'turno_esperado'], ['acao_id', 'confirmar_rolagem']],
             ['sala:repetir', 'repetir', ['pedido_id']],
             ['sala:descartar', 'descartar', ['pedido_id']],
         ]) {

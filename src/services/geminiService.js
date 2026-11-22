@@ -156,7 +156,7 @@ class GeminiService {
         }
     }
 
-    async continuarCampanha(contexto, aoTrecho) {
+    async continuarCampanha(contexto, aoTrecho, tentativa = 1) {
         const mensagem = JSON.stringify(contexto);
         if (mensagem.length > LIMITE_CONTEXTO || !contexto.pedido?.id) throw new Error('Contexto narrativo inválido.');
         let ultimaNarracao = '', ultimoEnvio = 0;
@@ -168,9 +168,13 @@ class GeminiService {
                 aoTrecho(narracao);
             }
         });
-        const opcoes = { systemPrompt: PROMPT_CAMPANHA, schema: criarEsquemaCampanha(contexto.direcao_definida), aoTexto,
-            json: true, maxTokens: this.limiteMestre, temperatura: 0.75, usarHistorico: false,
-            operacao: 'campanha', maximoTentativas: 1, prazoMs: 60000 };
+        const repetindo = tentativa > 1;
+        const systemPrompt = repetindo
+            ? PROMPT_CAMPANHA + '\nReescreva esta cena de forma breve. Preserve o resultado oficial. Use [] em objetivos e acontecimentos e em cada lista dentro de novidades. Mantenha todas as chaves obrigatórias e não encerre a campanha.'
+            : PROMPT_CAMPANHA;
+        const opcoes = { systemPrompt, schema: criarEsquemaCampanha(contexto.direcao_definida), aoTexto,
+            json: true, maxTokens: this.limiteMestre, temperatura: repetindo ? 0.3 : 0.75, usarHistorico: false,
+            operacao: 'campanha', maximoTentativas: 1, prazoMs: repetindo ? 15000 : 45000 };
         const texto = this.provider === 'openrouter'
             ? await this._enviarOpenRouter(mensagem, 1, opcoes)
             : await this._enviarGemini(mensagem, 1, opcoes);

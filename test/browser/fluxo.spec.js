@@ -76,6 +76,12 @@ test('jornada completa com duas sessões isoladas, recarga, reconexão e falha d
         await a.getByRole('button',{name:'Observar',exact:true}).click(); await expect(a.locator('#turn')).toHaveText('Turno 2');
         await contextB.setOffline(false); await expect(b.locator('#turn')).toHaveText('Turno 2');
         await b.getByLabel('O que você faz?').fill('/teste inteligencia falha429'); await b.getByRole('button',{name:'Enviar ação'}).click();
+        const rollDialog = b.getByRole('dialog', { name: 'Teste de D20' });
+        await expect(rollDialog).toBeVisible();
+        await expect(b.locator('#turn')).toHaveText('Turno 2');
+        await expect(b.locator('#pending')).toBeHidden();
+        await rollDialog.getByRole('button', { name: 'Rolar D20' }).click();
+        await expect(rollDialog).toBeHidden();
         await expect(b.locator('#notice')).toContainText('Limite de requisições'); await expect(b.locator('#pending')).toBeVisible();
         await b.getByRole('button',{name:'Tentar novamente'}).click(); await expect(a.locator('#turn')).toHaveText('Turno 3'); await expect(b.locator('#pending')).toBeHidden();
         const destination = a.locator('#destinations button').first(); const destinationName = (await destination.textContent()).replace(/^Ir para /,'').replace(/ →$/,'');

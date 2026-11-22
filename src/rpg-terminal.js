@@ -156,7 +156,7 @@ class AplicacaoRpg {
         this.condutorCampanha = new CondutorCampanha({
             carregar: async () => ({ mundo: this.preparacao.dados, campanha: this.preparacao.dados.campanha }),
             salvar: campanha => this.salvarPreparacao(campanha),
-            consultar: contexto => this.obterServico().continuarCampanha(contexto),
+            consultar: (contexto, tentativa) => this.obterServico().continuarCampanha(contexto, undefined, tentativa),
             rolar: this.rolar,
             aoResultado: cena => this.mostrarTeste(cena),
         });
